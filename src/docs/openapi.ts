@@ -6,6 +6,10 @@ import { ADDRESS_MAX_LENGTH } from '../schemas/auth.schema';
 import { MAX_FEATURES, MAX_SORT_ORDER } from '../schemas/package.schema';
 import { MAX_GALLERY_SORT_ORDER } from '../schemas/gallery.schema';
 import { MAX_IMAGE_DIMENSION } from '../services/storage/imageProcessing';
+import { PHOTOS } from '../config/photos';
+
+const TTL_MINUTES = PHOTOS.LINK_TTL_SECONDS / 60;
+const MAX_PHOTOS_PER_EVENT = PHOTOS.MAX_PER_EVENT;
 
 /**
  * מסמך OpenAPI 3 של EventStyle.
@@ -50,7 +54,34 @@ const R = {
     'UPLOAD_FAILED',
     'Image upload failed, please try again later',
   ),
+  storageDeleteFailed: errorResponse(
+    'A public gallery copy could not be removed from storage. It is hidden, nothing else was deleted – retry the request',
+    'STORAGE_DELETE_FAILED',
+    'The public gallery copy could not be removed from storage. It is hidden; please try again',
+    { galleryItemIds: [12] },
+  ),
+  copyCreatedMeanwhile: errorResponse(
+    'A gallery copy was created while deleting (rare race) – nothing was deleted, retry the request',
+    'PHOTO_IN_GALLERY',
+    'A gallery copy was created while deleting. Please try again',
+    { galleryItemIds: [12] },
+  ),
   noContent: { description: 'Deleted successfully – נמחק (ללא תוכן בתשובה)' },
+  eventForbidden: errorResponse(
+    'Event belongs to another client, or has no owner (clients only)',
+    'FORBIDDEN',
+    'You do not have access to this event',
+  ),
+  photoNotFound: errorResponse(
+    'Event or photo not found (or the photo belongs to another event)',
+    'NOT_FOUND',
+    'Photo not found for this event',
+  ),
+  consentRequired: errorResponse(
+    'The event owner has not given (or revoked) the publish consent',
+    'PUBLISH_CONSENT_REQUIRED',
+    'The event owner has not given consent to publish this photo',
+  ),
 };
 
 const bearer = [{ bearerAuth: [] }];
@@ -97,12 +128,35 @@ const exampleUser = {
   createdAt: '2026-10-01T09:00:00.000Z',
 };
 const exampleToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQ2xpZW50Iiwic3ViIjoiMiJ9.signature';
+const examplePhotoUrl =
+  'https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg' +
+  '&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated';
+/** תמונת אירוע כפי שהלקוחה רואה אותה */
 const examplePhoto = {
   id: 7,
   eventId: 1,
-  url: 'https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg',
-  publicId: 'eventstyle/events/1/abc',
+  url: examplePhotoUrl,
+  urlExpiresAt: '2026-10-20T12:10:00.000Z',
+  isPrivate: true,
+  publishConsent: false,
+  publishedInGallery: false,
+  uploadedByMe: true,
+  canDelete: true,
   createdAt: '2026-10-20T12:00:00.000Z',
+};
+/** אותה תמונה כפי שהמנהלת רואה אותה */
+const exampleAdminPhoto = {
+  ...examplePhoto,
+  uploadedByMe: false,
+  publicId: 'eventstyle/events/1/abc',
+  storageType: 'authenticated',
+  uploadedById: 2,
+  galleryItemId: null,
+};
+const exampleAdminPhotoListItem = {
+  ...exampleAdminPhoto,
+  publishConsent: true,
+  event: { id: 1, eventName: 'יום הולדת 30 לנועה', eventType: 'Birthday', clientName: 'נועה לוי' },
 };
 const exampleEventForAdmin = {
   id: 1,
@@ -121,11 +175,11 @@ const exampleEventForAdmin = {
   coverImageUrl: null,
   notes: 'להזמין בלונים בגוון ורוד עתיק',
   userId: 2,
-  photos: [examplePhoto],
+  photos: [exampleAdminPhoto],
   createdAt: '2026-10-01T09:00:00.000Z',
   updatedAt: '2026-10-10T09:00:00.000Z',
 };
-const { notes: _omit, ...exampleEventForClient } = exampleEventForAdmin;
+const exampleEventForClient = (({ notes: _omit, ...rest }) => ({ ...rest, photos: [examplePhoto] }))(exampleEventForAdmin);
 const exampleListItem = (() => {
   const { photos: _p, ...rest } = exampleEventForAdmin;
   return { ...rest, photoCount: 1 };
@@ -183,7 +237,20 @@ const exampleGallery = {
   sortOrder: 0,
   createdAt: '2026-10-05T10:00:00.000Z',
 };
-const exampleAdminGallery = { ...exampleGallery, isPublished: true, updatedAt: '2026-10-27T12:00:00.000Z' };
+const exampleAdminGallery = { ...exampleGallery, isPublished: true, sourceEventPhotoId: null, updatedAt: '2026-10-27T12:00:00.000Z' };
+const examplePublishedCopy = {
+  id: 12,
+  title: 'שולחן מתוקים ורוד',
+  category: 'Birthday',
+  url: 'https://res.cloudinary.com/demo/image/upload/v1/eventstyle/gallery/xyz.jpg',
+  publicId: 'eventstyle/gallery/xyz',
+  isFeatured: false,
+  sortOrder: 0,
+  createdAt: '2026-10-27T13:00:00.000Z',
+  isPublished: true,
+  sourceEventPhotoId: 7,
+  updatedAt: '2026-10-27T13:00:00.000Z',
+};
 
 const authResult = { token: exampleToken, user: exampleUser };
 
@@ -206,7 +273,13 @@ export const openApiDocument = {
     { name: 'Admin', description: 'ממשק ניהול (מנהלת בלבד)' },
     { name: 'Gallery', description: 'גלריית עיצובים ציבורית' },
     { name: 'Events', description: 'אירועים (פרטיים – דורש התחברות)' },
-    { name: 'Event Photos', description: 'תמונות אירוע' },    { name: 'System', description: 'בדיקת פעילות' },
+    {
+      name: 'Event Photos',
+      description:
+        'תמונות אירוע פרטיות: מנהלת או בעלת האירוע. תמונות חדשות נשמרות כקבצים פרטיים (authenticated) ' +
+        `ונצפות רק דרך קישור חתום וזמני (${TTL_MINUTES} דקות) שנוצר אחרי בדיקת ההרשאות. הסכמה לפרסום ופרסום בגלריה.`,
+    },
+    { name: 'System', description: 'בדיקת פעילות' },
   ],
   components: {
     securitySchemes: {
@@ -237,6 +310,12 @@ export const openApiDocument = {
                   'UNSUPPORTED_FILE_TYPE',
                   'STORAGE_NOT_CONFIGURED',
                   'UPLOAD_FAILED',
+                  'STORAGE_DELETE_FAILED',
+                  'PHOTO_LIMIT_REACHED',
+                  'DUPLICATE_PHOTO',
+                  'PUBLISH_CONSENT_REQUIRED',
+                  'ALREADY_PUBLISHED',
+                  'PHOTO_IN_GALLERY',
                   'GOOGLE_AUTH_FAILED',
                   'GOOGLE_AUTH_NOT_CONFIGURED',
                   'GOOGLE_UNAVAILABLE',
@@ -425,9 +504,14 @@ export const openApiDocument = {
           ref('GalleryItem'),
           {
             type: 'object',
-            required: ['isPublished', 'updatedAt'],
+            required: ['isPublished', 'sourceEventPhotoId', 'updatedAt'],
             properties: {
               isPublished: { type: 'boolean', description: 'false = hidden from every public endpoint (the file stays in storage)' },
+              sourceEventPhotoId: {
+                type: 'integer',
+                nullable: true,
+                description: 'The event photo this public copy was made from (admin only). null for items uploaded directly to the gallery',
+              },
               updatedAt: { type: 'string', format: 'date-time' },
             },
           },
@@ -464,15 +548,84 @@ export const openApiDocument = {
       },
       EventPhoto: {
         type: 'object',
-        required: ['id', 'eventId', 'url', 'publicId', 'createdAt'],
+        description:
+          'תמונת אירוע. ללקוחה לא נשלחים publicId, סוג האחסון או קישור קבוע לתמונה פרטית. ' +
+          'המנהלת מקבלת גם את השדות של AdminEventPhoto.',
+        required: ['id', 'eventId', 'url', 'urlExpiresAt', 'isPrivate', 'publishConsent', 'publishedInGallery', 'uploadedByMe', 'canDelete', 'createdAt'],
         properties: {
           id: { type: 'integer' },
           eventId: { type: 'integer' },
-          url: { type: 'string' },
-          publicId: { type: 'string', nullable: true },
+          url: {
+            type: 'string',
+            nullable: true,
+            description:
+              `Private photo: a signed temporary link, valid for ${TTL_MINUTES} minutes (see urlExpiresAt). ` +
+              'Legacy public photo: its permanent URL. null if a link cannot be created right now (e.g. storage not configured). ' +
+              'Do not store this link – request the photo again for a fresh one.',
+          },
+          urlExpiresAt: { type: 'string', format: 'date-time', nullable: true, description: 'When the link stops working. null for legacy public photos' },
+          isPrivate: { type: 'boolean', description: 'true = private file (all new uploads); false = legacy public photo' },
+          publishConsent: { type: 'boolean', description: 'The event owner agreed that this photo may be published in the gallery (default false)' },
+          publishedInGallery: { type: 'boolean', description: 'A public copy of this photo is currently published in the gallery' },
+          uploadedByMe: { type: 'boolean' },
+          canDelete: { type: 'boolean', description: 'Admin: always. Client: only photos she uploaded' },
           createdAt: { type: 'string', format: 'date-time' },
         },
         example: examplePhoto,
+      },
+      AdminEventPhoto: {
+        description: 'תמונת אירוע בתשובה למנהלת – כולל פרטי אחסון וקישור לעותק בגלריה',
+        allOf: [
+          ref('EventPhoto'),
+          {
+            type: 'object',
+            required: ['publicId', 'storageType', 'uploadedById', 'galleryItemId'],
+            properties: {
+              publicId: { type: 'string', nullable: true },
+              storageType: { type: 'string', enum: ['public', 'authenticated'] },
+              uploadedById: { type: 'integer', nullable: true, description: 'null for legacy photos or a deleted user' },
+              galleryItemId: { type: 'integer', nullable: true, description: 'The gallery copy made from this photo (published or hidden)' },
+            },
+          },
+        ],
+        example: exampleAdminPhoto,
+      },
+      AdminEventPhotoListItem: {
+        allOf: [
+          ref('AdminEventPhoto'),
+          {
+            type: 'object',
+            required: ['event'],
+            properties: {
+              event: {
+                type: 'object',
+                properties: { id: { type: 'integer' }, eventName: { type: 'string' }, eventType: ref('EventType'), clientName: { type: 'string' } },
+              },
+            },
+          },
+        ],
+        example: exampleAdminPhotoListItem,
+      },
+      ConsentInput: {
+        type: 'object',
+        required: ['publishConsent'],
+        additionalProperties: false,
+        properties: { publishConsent: { type: 'boolean', description: 'true = give consent, false = revoke (removes the gallery copy)' } },
+        example: { publishConsent: true },
+      },
+      PublishInput: {
+        type: 'object',
+        required: ['title'],
+        additionalProperties: false,
+        description: 'שדות לא מוכרים (למשל url) נדחים.',
+        properties: {
+          title: { type: 'string', minLength: 2, maxLength: 120 },
+          category: { allOf: [ref('EventType')], description: 'Default: the event type' },
+          isPublished: { type: 'boolean', description: 'Default true. false = create the copy hidden (draft)' },
+          isFeatured: { type: 'boolean', description: 'Default false' },
+          sortOrder: { type: 'integer', minimum: 0, maximum: MAX_GALLERY_SORT_ORDER, description: 'Default 0' },
+        },
+        example: { title: 'שולחן מתוקים ורוד', isFeatured: false },
       },
       Event: {
         type: 'object',
@@ -504,7 +657,11 @@ export const openApiDocument = {
           notes: { type: 'string', nullable: true, description: 'Admin only – internal notes' },
           userId: { type: 'integer', nullable: true, description: 'Linked verified client (set by server only)' },
           photoCount: { type: 'integer', description: 'In list responses' },
-          photos: { type: 'array', items: ref('EventPhoto'), description: 'In single event responses' },
+          photos: {
+            type: 'array',
+            items: ref('EventPhoto'),
+            description: 'In single event responses, oldest first, with fresh view links. Admin responses use AdminEventPhoto',
+          },
           createdAt: { type: 'string', format: 'date-time' },
           updatedAt: { type: 'string', format: 'date-time' },
         },
@@ -919,7 +1076,9 @@ export const openApiDocument = {
       patch: {
         tags: ['Gallery'],
         summary: 'עריכת פריט גלריה: כותרת, סוג, פרסום / הסתרה, מובילה, סדר (Admin)',
-        description: 'שדה שלא נשלח לא משתנה. הסתרה (isPublished=false) לא מוחקת את הקובץ.',
+        description:
+          'שדה שלא נשלח לא משתנה. הסתרה (isPublished=false) לא מוחקת את הקובץ. ' +
+          'עותק של תמונת אירוע (sourceEventPhotoId) יכול לחזור לפרסום רק אם ההסכמה בתוקף – אחרת 409 PUBLISH_CONSENT_REQUIRED.',
         security: bearer,
         parameters: [idParam('id', 'Gallery item id')],
         requestBody: { required: true, content: jsonContent(ref('GalleryUpdateInput')) },
@@ -929,15 +1088,19 @@ export const openApiDocument = {
           401: R.unauthorized,
           403: R.forbidden,
           404: errorResponse('Gallery item not found', 'NOT_FOUND', 'Gallery item not found'),
+          409: R.consentRequired,
         },
       },
       delete: {
         tags: ['Gallery'],
         summary: 'מחיקת תמונה מהגלריה לצמיתות, כולל הקובץ באחסון (Admin)',
-        description: 'להסתרה בלי מחיקה: PATCH עם isPublished=false.',
+        description:
+          'להסתרה בלי מחיקה: PATCH עם isPublished=false. ' +
+          'בעותק של תמונת אירוע: נמחק רק העותק הציבורי; תמונת המקור וההסכמה לא משתנות (אפשר לפרסם שוב). ' +
+          'העותק מוסתר קודם ונמחק מהאחסון לפני הרשומה; אם המחיקה באחסון נכשלת – 502 STORAGE_DELETE_FAILED והפריט נשאר מוסתר.',
         security: bearer,
         parameters: [idParam('id', 'Gallery item id')],
-        responses: { 204: R.noContent, 400: R.validation, 401: R.unauthorized, 403: R.forbidden, 404: R.notFound },
+        responses: { 204: R.noContent, 400: R.validation, 401: R.unauthorized, 403: R.forbidden, 404: R.notFound, 502: R.storageDeleteFailed },
       },
     },
     '/api/admin/gallery': {
@@ -1026,7 +1189,7 @@ export const openApiDocument = {
           200: { description: 'Event (client view – without notes)', content: jsonContent(ref('Event'), exampleEventForClient) },
           400: R.validation,
           401: R.unauthorized,
-          403: errorResponse('Event belongs to another client', 'FORBIDDEN', 'You do not have access to this event'),
+          403: R.eventForbidden,
           404: R.notFound,
         },
       },
@@ -1050,9 +1213,24 @@ export const openApiDocument = {
       delete: {
         tags: ['Events'],
         summary: 'מחיקת אירוע וכל התמונות שלו (Admin)',
+        description:
+          'כל התמונות של האירוע נמחקות, וגם **כל העותקים הציבוריים שנוצרו מהן בגלריה**:\n\n' +
+          '1. ההסכמות מבוטלות והעותקים מוסתרים מיד.\n' +
+          '2. העותקים נמחקים מהאחסון (invalidate: true) ומהגלריה.\n' +
+          '3. רק אז האירוע נמחק, והקבצים הפרטיים נמחקים מהאחסון.\n\n' +
+          'אם מחיקת עותק באחסון נכשלת – 502 STORAGE_DELETE_FAILED והאירוע **לא** נמחק; העותקים שנכשלו נשארים מוסתרים ' +
+          'ולא ניתנים לפרסום מחדש. שליחה חוזרת של הבקשה ממשיכה. פריטי גלריה שאינם מקושרים לאירוע לא משתנים.',
         security: bearer,
         parameters: [idParam()],
-        responses: { 204: R.noContent, 400: R.validation, 401: R.unauthorized, 403: R.forbidden, 404: R.notFound },
+        responses: {
+          204: R.noContent,
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          404: R.notFound,
+          409: R.copyCreatedMeanwhile,
+          502: R.storageDeleteFailed,
+        },
       },
     },
     '/api/events/{id}/status': {
@@ -1072,12 +1250,33 @@ export const openApiDocument = {
       },
     },
     '/api/events/{id}/photos': {
+      get: {
+        tags: ['Event Photos'],
+        summary: 'כל התמונות של אירוע, עם קישורי צפייה זמניים (Admin או בעלת האירוע)',
+        description:
+          `ממוינות מהישנה לחדשה. לכל תמונה פרטית נוצר קישור חתום חדש, תקף ${TTL_MINUTES} דקות (urlExpiresAt). ` +
+          'אירוע בלי בעלים – למנהלת בלבד. אם אי אפשר ליצור קישור כרגע, התמונה מוחזרת עם url=null.',
+        security: bearer,
+        parameters: [idParam()],
+        responses: {
+          200: { description: 'Photos (admin: AdminEventPhoto)', content: jsonContent({ type: 'array', items: ref('EventPhoto') }, [examplePhoto]) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.eventForbidden,
+          404: R.notFound,
+        },
+      },
       post: {
         tags: ['Event Photos'],
-        summary: 'העלאת תמונות לאירוע (Admin)',
+        summary: 'העלאת תמונות פרטיות לאירוע (Admin או בעלת האירוע)',
         description:
-          `multipart/form-data. 1–${MAX_FILES_PER_REQUEST} קבצים בשדה photos. סוגים: ${ALLOWED_MIME_TYPES.join(', ')}. עד ${MAX_FILE_SIZE_MB}MB לקובץ.\n\n` +
-          `כל תמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד ${MAX_IMAGE_DIMENSION}px והסרת כל המטא-דאטה (כולל GPS).`,
+          `multipart/form-data. 1–${MAX_FILES_PER_REQUEST} קבצים בשדה photos. סוגים: ${ALLOWED_MIME_TYPES.join(', ')}. עד ${MAX_FILE_SIZE_MB}MB לקובץ. ` +
+          `עד ${MAX_PHOTOS_PER_EVENT} תמונות לאירוע.\n\n` +
+          'ההרשאה והמגבלה נבדקות **לפני** קבלת הקבצים. סוג הקובץ נבדק לפי התוכן האמיתי (חתימת הקובץ ופענוח התמונה). ' +
+          `כל תמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד ${MAX_IMAGE_DIMENSION}px והסרת כל המטא-דאטה (כולל GPS).\n\n` +
+          '**כל התמונות החדשות נשמרות כקבצים פרטיים** (Cloudinary authenticated). התשובה כוללת קישור צפייה זמני בלבד.\n\n' +
+          '**כפילויות:** SHA-256 של הקובץ המעובד. אותה תמונה פעמיים באותה בקשה, או תמונה שכבר קיימת באירוע → 409 DUPLICATE_PHOTO ' +
+          '(גם בבקשות מקבילות). הבקשה כולה נדחית – אף קובץ לא נשמר.',
         security: bearer,
         parameters: [idParam()],
         requestBody: {
@@ -1087,17 +1286,27 @@ export const openApiDocument = {
               schema: {
                 type: 'object',
                 required: ['photos'],
-                properties: { photos: { type: 'array', items: { type: 'string', format: 'binary' } } },
+                properties: { photos: { type: 'array', minItems: 1, maxItems: MAX_FILES_PER_REQUEST, items: { type: 'string', format: 'binary' } } },
               },
             },
           },
         },
         responses: {
-          201: { description: 'Created photos', content: jsonContent({ type: 'array', items: ref('EventPhoto') }, [examplePhoto]) },
+          201: { description: 'Created photos (only the new ones)', content: jsonContent({ type: 'array', items: ref('EventPhoto') }, [examplePhoto]) },
           400: R.validation,
           401: R.unauthorized,
-          403: R.forbidden,
+          403: R.eventForbidden,
           404: R.notFound,
+          409: {
+            description: 'Duplicate photo (DUPLICATE_PHOTO) or the event would exceed the photo limit (PHOTO_LIMIT_REACHED)',
+            content: jsonContent(ref('ErrorResponse'), {
+              error: {
+                code: 'PHOTO_LIMIT_REACHED',
+                message: `An event can have at most ${MAX_PHOTOS_PER_EVENT} photos (currently 49)`,
+                details: { limit: MAX_PHOTOS_PER_EVENT, current: 49, requested: 2 },
+              },
+            }),
+          },
           413: R.fileTooLarge,
           415: R.unsupportedFile,
           502: R.uploadFailed,
@@ -1106,12 +1315,120 @@ export const openApiDocument = {
       },
     },
     '/api/events/{id}/photos/{photoId}': {
-      delete: {
+      get: {
         tags: ['Event Photos'],
-        summary: 'מחיקת תמונת אירוע (Admin)',
+        summary: 'תמונה אחת עם קישור צפייה זמני חדש – לרענון קישור שפג (Admin או בעלת האירוע)',
+        description: `הקישור תקף ${TTL_MINUTES} דקות. אחרי שפג – מבקשים שוב את התמונה. כאן כשל ביצירת הקישור מוחזר כשגיאה (503).`,
         security: bearer,
         parameters: [idParam(), idParam('photoId', 'Photo id')],
-        responses: { 204: R.noContent, 400: R.validation, 401: R.unauthorized, 403: R.forbidden, 404: R.notFound },
+        responses: {
+          200: { description: 'Photo (admin: AdminEventPhoto)', content: jsonContent(ref('EventPhoto'), examplePhoto) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.eventForbidden,
+          404: R.photoNotFound,
+          503: R.storageMissing,
+        },
+      },
+      delete: {
+        tags: ['Event Photos'],
+        summary: 'מחיקת תמונת אירוע (Admin – כל תמונה; בעלת האירוע – רק תמונות שהעלתה)',
+        description:
+          'הקובץ נמחק גם מהאחסון (כולל ביטול העותקים ב-CDN).\n\n' +
+          '**תמונה שפורסמה בגלריה:** העותק הציבורי מוסר **לפני** תמונת המקור – ההסכמה מבוטלת והעותק מוסתר מיד, ' +
+          'נמחק מהאחסון (invalidate: true) ומהגלריה, ורק אז התמונה נמחקת. ' +
+          'אם מחיקת העותק באחסון נכשלת – 502 STORAGE_DELETE_FAILED, והתמונה לא נמחקת; העותק נשאר מוסתר ולא ניתן לפרסום מחדש, ' +
+          'ושליחה חוזרת של הבקשה ממשיכה.',
+        security: bearer,
+        parameters: [idParam(), idParam('photoId', 'Photo id')],
+        responses: {
+          204: R.noContent,
+          400: R.validation,
+          401: R.unauthorized,
+          403: errorResponse('Another client event, or a photo the client did not upload', 'FORBIDDEN', 'You can delete only photos you uploaded'),
+          404: R.photoNotFound,
+          409: R.copyCreatedMeanwhile,
+          502: R.storageDeleteFailed,
+        },
+      },
+    },
+    '/api/events/{id}/photos/{photoId}/consent': {
+      put: {
+        tags: ['Event Photos'],
+        summary: 'הסכמה / ביטול הסכמה לפרסום תמונה בגלריה (בעלת האירוע בלבד)',
+        description:
+          'ברירת המחדל: אין הסכמה, ותמונות לעולם לא מתפרסמות אוטומטית. הסכמה רק **מאפשרת** למנהלת לפרסם.\n\n' +
+          '**ביטול הסכמה** (publishConsent=false): אם יש עותק בגלריה – הוא מוסתר מיד, ואז נמחק מהאחסון (כולל CDN invalidation) ומהגלריה. ' +
+          'אם המחיקה באחסון נכשלת, העותק נשאר מוסתר ולא יכול לחזור לפרסום; שליחה חוזרת של הביטול מנסה שוב. ' +
+          'גם המנהלת לא יכולה לשנות הסכמה (403).',
+        security: bearer,
+        parameters: [idParam(), idParam('photoId', 'Photo id')],
+        requestBody: { required: true, content: jsonContent(ref('ConsentInput')) },
+        responses: {
+          200: { description: 'Updated photo', content: jsonContent(ref('EventPhoto'), { ...examplePhoto, publishConsent: true }) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: errorResponse('Not the event owner (including the admin)', 'FORBIDDEN', 'Only the event owner can change the publish consent'),
+          404: R.photoNotFound,
+        },
+      },
+    },
+    '/api/events/{id}/photos/{photoId}/publish': {
+      post: {
+        tags: ['Event Photos'],
+        summary: 'פרסום תמונת אירוע בגלריה הציבורית כעותק נפרד (Admin)',
+        description:
+          'מחייב הסכמה בתוקף של בעלת האירוע. נוצר **עותק ציבורי חדש ונפרד** באחסון – קובץ המקור נשאר פרטי ולא נחשף – ' +
+          'ופריט גלריה שמקושר לתמונה (sourceEventPhotoId). פרסום כפול נחסם גם בבקשות מקבילות. ' +
+          'אם השמירה נכשלת אחרי ההעתקה – העותק נמחק.\n\n' +
+          'הסתרה / עריכה: PATCH /api/gallery/{id}. הסרה: DELETE /api/gallery/{id}.',
+        security: bearer,
+        parameters: [idParam(), idParam('photoId', 'Photo id')],
+        requestBody: { required: true, content: jsonContent(ref('PublishInput')) },
+        responses: {
+          201: { description: 'Gallery item (the public copy)', content: jsonContent(ref('AdminGalleryItem'), examplePublishedCopy) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          404: R.photoNotFound,
+          409: {
+            description: 'No consent (PUBLISH_CONSENT_REQUIRED) or already in the gallery (ALREADY_PUBLISHED)',
+            content: jsonContent(ref('ErrorResponse'), {
+              error: { code: 'ALREADY_PUBLISHED', message: 'This photo already has a copy in the gallery', details: { galleryItemId: 12 } },
+            }),
+          },
+          502: R.uploadFailed,
+          503: R.storageMissing,
+        },
+      },
+    },
+    '/api/admin/event-photos': {
+      get: {
+        tags: ['Admin'],
+        summary: 'תמונות אירוע לניהול – למשל תמונות שקיבלו הסכמה וממתינות לפרסום (Admin)',
+        description: 'לדוגמה: publishConsent=true&inGallery=false. ממוין מהחדשה לישנה, עם קישורי צפייה זמניים.',
+        security: bearer,
+        parameters: [
+          { name: 'eventId', in: 'query', required: false, schema: { type: 'integer', minimum: 1 } },
+          { name: 'publishConsent', in: 'query', required: false, schema: { type: 'string', enum: ['true', 'false'] } },
+          {
+            name: 'inGallery',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', enum: ['true', 'false'] },
+            description: 'true = has a gallery copy (published or hidden)',
+          },
+          ...pageParams,
+        ],
+        responses: {
+          200: {
+            description: 'Event photos, paginated',
+            content: jsonContent(pageOf('AdminEventPhotoListItem'), examplePage(exampleAdminPhotoListItem)),
+          },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+        },
       },
     },
     '/api/health': {

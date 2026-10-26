@@ -1,10 +1,18 @@
 import type { EventStatus, Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { HttpError } from '../errors/HttpError';
-import { fromDateOnly, toEventDto, toPhotoDto } from '../utils/mappers';
+import { fromDateOnly, toEventDto } from '../utils/mappers';
 import { toPage, toSkipTake } from '../utils/pagination';
-import { getImageStorage, removeImagesSafely, type StoredImage } from './storage/imageStorage';
+import { removeImagesSafely } from './storage/imageStorage';
 import { assertPackageAllowedForEvent } from './packages.service';
+import {
+  copyCreatedMeanwhile,
+  hideCopiesForRemoval,
+  photoOrder,
+  removeGalleryCopies,
+  storageDeleteFailed,
+  toPhotoDtos,
+} from './photos.service';
 import type { EventBodyInput, EventListQuery } from '../schemas/event.schema';
 import type { PaginationQuery } from '../schemas/common.schema';
 
@@ -15,8 +23,16 @@ const listInclude = {
 
 const detailsInclude = {
   package: { select: { id: true, name: true } },
-  photos: { orderBy: { createdAt: 'asc' } },
+  photos: { orderBy: photoOrder, include: { galleryItem: { select: { id: true, isPublished: true } } } },
 } satisfies Prisma.EventInclude;
+
+type EventDetails = Prisma.EventGetPayload<{ include: typeof detailsInclude }>;
+
+/** אירוע בודד עם התמונות שלו. קישורי הצפייה לתמונות נוצרים רק כאן – אחרי בדיקת ההרשאות */
+function toEventDetailsDto(event: EventDetails, user: Express.AuthUser) {
+  const isAdmin = user.role === 'Admin';
+  return toEventDto(event, isAdmin, toPhotoDtos(event.photos, user));
+}
 
 /**
  * קישור אירוע ללקוח: רק משתמש Client שאימת את כתובת האימייל שלו.
@@ -106,18 +122,17 @@ export async function listMyEvents(user: Express.AuthUser, pagination: Paginatio
 /** אירוע בודד: מנהלת – כל אירוע; לקוח – רק אירוע שמשויך אליו (אחרת 403) */
 export async function getEvent(id: number, user: Express.AuthUser) {
   const event = await findEventOr404(id);
-  const isAdmin = user.role === 'Admin';
-  if (!isAdmin && event.userId !== user.id) {
+  if (user.role !== 'Admin' && event.userId !== user.id) {
     throw HttpError.forbidden('You do not have access to this event');
   }
-  return toEventDto(event, isAdmin);
+  return toEventDetailsDto(event, user);
 }
 
 /**
  * יצירת אירוע: החבילה חייבת להיות פעילה, ומסוג האירוע או כללית.
  * הבדיקה והיצירה באותו Transaction, עם נעילת שורת החבילה (ראו assertPackageAllowedForEvent).
  */
-export async function createEvent(input: EventBodyInput) {
+export async function createEvent(input: EventBodyInput, user: Express.AuthUser) {
   const userId = await resolveVerifiedClientId(input.clientEmail);
   const event = await prisma.$transaction(async (tx) => {
     await assertPackageAllowedForEvent(tx, input.packageId, input.eventType);
@@ -126,14 +141,14 @@ export async function createEvent(input: EventBodyInput) {
       include: detailsInclude,
     });
   });
-  return toEventDto(event, true);
+  return toEventDetailsDto(event, user);
 }
 
 /**
  * עריכת אירוע: אותם כללים כמו ביצירה. התאמת הסוג נבדקת תמיד – גם כשמשנים רק את eventType של האירוע.
  * חבילה שעברה לארכיון מותרת רק אם האירוע כבר משויך אליה.
  */
-export async function updateEvent(id: number, input: EventBodyInput) {
+export async function updateEvent(id: number, input: EventBodyInput, user: Express.AuthUser) {
   const existing = await findEventOr404(id);
   const userId = await resolveVerifiedClientId(input.clientEmail);
   const event = await prisma.$transaction(async (tx) => {
@@ -144,48 +159,49 @@ export async function updateEvent(id: number, input: EventBodyInput) {
       include: detailsInclude,
     });
   });
-  return toEventDto(event, true);
+  return toEventDetailsDto(event, user);
 }
 
-export async function updateEventStatus(id: number, status: EventStatus) {
+export async function updateEventStatus(id: number, status: EventStatus, user: Express.AuthUser) {
   await findEventOr404(id);
   const event = await prisma.event.update({ where: { id }, data: { status }, include: detailsInclude });
-  return toEventDto(event, true);
+  return toEventDetailsDto(event, user);
 }
 
+/**
+ * מחיקת אירוע, כולל כל התמונות שלו והעותקים הציבוריים שנוצרו מהן בגלריה.
+ * 1. Transaction: נעילת האירוע והתמונות, ביטול ההסכמות והסתרת כל העותקים מיד.
+ * 2. מחיקת העותקים מהאחסון (invalidate) ומהגלריה. אם מחיקה אחת נכשלת → 502 STORAGE_DELETE_FAILED, והאירוע
+ *    לא נמחק: העותקים שנכשלו נשארים מוסתרים ומקושרים לתמונות – ניסיון חוזר ימשיך מאותה נקודה.
+ * 3. Transaction: נעילה מחדש ומחיקת האירוע (התמונות נמחקות ב-Cascade), ואז הקבצים שלהן מהאחסון –
+ *    כל אחד לפי סוג האחסון שלו. התמונות נקראות אחרי הנעילה, כך שגם תמונה שהועלתה ממש לפני המחיקה נמחקת.
+ * פריטי גלריה שאינם מקושרים לתמונות האירוע לא נוגעים בהם.
+ */
 export async function deleteEvent(id: number) {
-  const event = await findEventOr404(id);
-  // התמונות נמחקות מהטבלה אוטומטית (Cascade), ומשירות האחסון כאן
-  await prisma.event.delete({ where: { id } });
-  await removeImagesSafely(event.photos.map((photo) => photo.publicId));
-}
+  const lockEvent = async (tx: Prisma.TransactionClient) => {
+    const locked = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "Events" WHERE id = ${id} FOR UPDATE`;
+    if (locked.length === 0) throw HttpError.notFound('Event not found');
+    // נעילת שורות התמונות: פרסום מקביל (שנועל את שורת התמונה) מסתיים לפני הבדיקה, או נכשל אחרי המחיקה
+    return tx.$queryRaw<{ id: number }[]>`SELECT id FROM "EventPhotos" WHERE "eventId" = ${id} FOR UPDATE`;
+  };
 
-/** העלאת תמונות לאירוע. אם אחת ההעלאות נכשלת – מוחקים את מה שכבר הועלה */
-export async function addEventPhotos(id: number, files: Express.Multer.File[]) {
-  await findEventOr404(id);
-  const storage = getImageStorage();
+  const copies = await prisma.$transaction(async (tx) => {
+    const photos = await lockEvent(tx);
+    return hideCopiesForRemoval(tx, photos.map((p) => p.id));
+  });
+  const failed = await removeGalleryCopies(copies);
+  if (failed.length > 0) throw storageDeleteFailed(failed);
 
-  const results = await Promise.allSettled(files.map((file) => storage.upload(file, `events/${id}`)));
-  const uploaded = results
-    .filter((r): r is PromiseFulfilledResult<StoredImage> => r.status === 'fulfilled')
-    .map((r) => r.value);
-  const failure = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-  if (failure) {
-    await removeImagesSafely(uploaded.map((image) => image.publicId));
-    throw failure.reason;
-  }
-
-  const photos = await prisma.$transaction(
-    uploaded.map((image) =>
-      prisma.eventPhoto.create({ data: { eventId: id, url: image.url, publicId: image.publicId } }),
-    ),
-  );
-  return photos.map(toPhotoDto);
-}
-
-export async function deleteEventPhoto(eventId: number, photoId: number) {
-  const photo = await prisma.eventPhoto.findFirst({ where: { id: photoId, eventId } });
-  if (!photo) throw HttpError.notFound('Photo not found for this event');
-  await prisma.eventPhoto.delete({ where: { id: photo.id } });
-  await removeImagesSafely([photo.publicId]);
+  const photos = await prisma.$transaction(async (tx) => {
+    await lockEvent(tx);
+    const remaining = await tx.galleryItem.findMany({ where: { sourceEventPhoto: { eventId: id } }, select: { id: true } });
+    if (remaining.length > 0) throw copyCreatedMeanwhile(remaining.map((item) => item.id));
+    const eventPhotos = await tx.eventPhoto.findMany({ where: { eventId: id }, select: { publicId: true, storageType: true } });
+    await tx.event.delete({ where: { id } });
+    return eventPhotos;
+  });
+  await Promise.all([
+    removeImagesSafely(photos.filter((p) => p.storageType === 'public').map((p) => p.publicId)),
+    removeImagesSafely(photos.filter((p) => p.storageType === 'authenticated').map((p) => p.publicId), { access: 'authenticated' }),
+  ]);
 }

@@ -60,13 +60,44 @@ export function toAdminPackageDto(pkg: Package & { _count?: { events: number } }
   };
 }
 
-export function toPhotoDto(photo: EventPhoto) {
-  return {
+/** מי צופה בתמונה: קובע אילו שדות מוחזרים ואם מותר לו למחוק */
+export interface PhotoViewer {
+  id: number;
+  isAdmin: boolean;
+}
+
+/** קישור לצפייה: בתמונה ציבורית ישנה – הקישור הקבוע (expiresAt=null); בתמונה פרטית – קישור זמני */
+export interface PhotoLink {
+  url: string;
+  expiresAt: Date | null;
+}
+
+export type PhotoWithGallery = EventPhoto & { galleryItem?: Pick<GalleryItem, 'id' | 'isPublished'> | null };
+
+/**
+ * תמונת אירוע. ללקוחה לא נשלחים publicId, סוג האחסון או קישור קבוע לתמונה פרטית –
+ * רק קישור זמני שנוצר אחרי בדיקת ההרשאות (link). link=null כשאי אפשר ליצור קישור כרגע.
+ */
+export function toPhotoDto(photo: PhotoWithGallery, viewer: PhotoViewer, link: PhotoLink | null) {
+  const dto = {
     id: photo.id,
     eventId: photo.eventId,
-    url: photo.url,
-    publicId: photo.publicId,
+    url: link?.url ?? null,
+    urlExpiresAt: link?.expiresAt ? link.expiresAt.toISOString() : null,
+    isPrivate: photo.storageType === 'authenticated',
+    publishConsent: photo.publishConsent,
+    publishedInGallery: Boolean(photo.galleryItem?.isPublished),
+    uploadedByMe: photo.uploadedById === viewer.id,
+    canDelete: viewer.isAdmin || photo.uploadedById === viewer.id,
     createdAt: photo.createdAt.toISOString(),
+  };
+  if (!viewer.isAdmin) return dto;
+  return {
+    ...dto,
+    publicId: photo.publicId,
+    storageType: photo.storageType,
+    uploadedById: photo.uploadedById,
+    galleryItemId: photo.galleryItem?.id ?? null,
   };
 }
 
@@ -83,25 +114,26 @@ export function toGalleryDto(item: GalleryItem) {
   };
 }
 
-/** פריט גלריה בממשק הניהול: גם מצב הפרסום ותאריך העדכון */
+/** פריט גלריה בממשק הניהול: גם מצב הפרסום, תאריך העדכון ותמונת האירוע שממנה נוצר העותק (אם יש) */
 export function toAdminGalleryDto(item: GalleryItem) {
   return {
     ...toGalleryDto(item),
     isPublished: item.isPublished,
+    sourceEventPhotoId: item.sourceEventPhotoId,
     updatedAt: item.updatedAt.toISOString(),
   };
 }
 
 type EventWithRelations = Event & {
   package?: Pick<Package, 'id' | 'name'> | null;
-  photos?: EventPhoto[];
   _count?: { photos: number };
 };
 
 /**
  * @param includeNotes true רק עבור מנהלת. לקוח לעולם לא מקבל את notes.
+ * @param photos התמונות אחרי המרה (toPhotoDto) – רק באירוע בודד
  */
-export function toEventDto(event: EventWithRelations, includeNotes: boolean) {
+export function toEventDto(event: EventWithRelations, includeNotes: boolean, photos?: ReturnType<typeof toPhotoDto>[]) {
   return {
     id: event.id,
     eventName: event.eventName,
@@ -120,7 +152,7 @@ export function toEventDto(event: EventWithRelations, includeNotes: boolean) {
     ...(includeNotes && { notes: event.notes }),
     userId: event.userId,
     ...(event._count && { photoCount: event._count.photos }),
-    ...(event.photos && { photos: event.photos.map(toPhotoDto) }),
+    ...(photos && { photos }),
     createdAt: event.createdAt.toISOString(),
     updatedAt: event.updatedAt.toISOString(),
   };

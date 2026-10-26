@@ -146,6 +146,64 @@ describe('CloudinaryStorage.getPrivateDownloadUrl', () => {
   });
 });
 
+describe('CloudinaryStorage.copyToPublic (publishing a separate public copy)', () => {
+  const uploaded = { type: 'upload', secure_url: 'https://res.cloudinary.test/image/upload/v1/eventstyle/gallery/copy.png', public_id: 'eventstyle/gallery/copy', format: 'png' };
+  const sourceBytes = Buffer.from('private-source-image-bytes');
+  const mockFetch = (status = 200, body: Buffer = sourceBytes) =>
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new Uint8Array(body), { status }));
+
+  it('a private source is read by the server through a short-lived signed link and uploaded as a NEW public file', async () => {
+    const fetchSpy = mockFetch();
+    const captured = mockUploadStream(uploaded);
+    const before = Math.floor(Date.now() / 1000);
+    const copy = await new CloudinaryStorage(TEST_CREDENTIALS).copyToPublic({ access: 'authenticated', publicId: 'eventstyle/events/1/abc', format: 'png' }, 'gallery');
+
+    expect(copy).toEqual({ url: uploaded.secure_url, publicId: 'eventstyle/gallery/copy' });
+    const url = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(url.host).toBe('api.cloudinary.com');
+    expect(url.searchParams.get('public_id')).toBe('eventstyle/events/1/abc');
+    expect(url.searchParams.get('type')).toBe('authenticated');
+    expect(Number(url.searchParams.get('expires_at')) - before).toBeLessThanOrEqual(122); // קישור המקור קצר-תוקף
+    expect(url.toString()).not.toContain(TEST_CREDENTIALS.api_secret);
+    // עותק ציבורי עם כל הגנות ההעלאה הרגילות, בלי type (ברירת מחדל: upload), מאותם בתים בדיוק
+    expect(captured.options).toEqual({ ...CLOUDINARY_UPLOAD_OPTIONS, folder: 'eventstyle/gallery' });
+    expect(captured.data?.equals(sourceBytes)).toBe(true);
+  });
+
+  it('a legacy public source is read from its URL', async () => {
+    const fetchSpy = mockFetch();
+    const captured = mockUploadStream(uploaded);
+    await new CloudinaryStorage(TEST_CREDENTIALS).copyToPublic({ access: 'public', url: 'https://res.cloudinary.test/old.jpg' }, 'gallery');
+    expect(String(fetchSpy.mock.calls[0][0])).toBe('https://res.cloudinary.test/old.jpg');
+    expect(captured.options).toEqual({ ...CLOUDINARY_UPLOAD_OPTIONS, folder: 'eventstyle/gallery' });
+  });
+
+  it.each([
+    ['the source cannot be read (HTTP 401)', () => mockFetch(401)],
+    ['the source is empty', () => mockFetch(200, Buffer.alloc(0))],
+    ['the network fails', () => vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'))],
+  ])('502 UPLOAD_FAILED and nothing is uploaded when %s', async (_name, arrange) => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    arrange();
+    const uploadStream = vi.spyOn(cloudinary.uploader, 'upload_stream');
+    await expect(
+      new CloudinaryStorage(TEST_CREDENTIALS).copyToPublic({ access: 'authenticated', publicId: 'x', format: 'jpg' }, 'gallery'),
+    ).rejects.toMatchObject({ status: 502, code: 'UPLOAD_FAILED' });
+    expect(uploadStream).not.toHaveBeenCalled();
+    // הקישור החתום לא נרשם ביומן
+    expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/signature=|api_key=/);
+  });
+
+  it('a Cloudinary upload error returns 502 UPLOAD_FAILED', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockFetch();
+    mockUploadStream(null, new Error('Resource not found'));
+    await expect(
+      new CloudinaryStorage(TEST_CREDENTIALS).copyToPublic({ access: 'authenticated', publicId: 'x', format: 'jpg' }, 'gallery'),
+    ).rejects.toMatchObject({ status: 502, code: 'UPLOAD_FAILED' });
+  });
+});
+
 describe('CloudinaryStorage.remove', () => {
   it('public (default) deletes the existing way plus CDN invalidation', async () => {
     const destroy = vi.spyOn(cloudinary.uploader, 'destroy').mockResolvedValue({ result: 'ok' });
@@ -200,11 +258,12 @@ describe('DisabledStorage (Cloudinary not configured)', () => {
     await expect(disabled.upload(file, 'g')).rejects.toMatchObject({ status: 503, code: 'STORAGE_NOT_CONFIGURED' });
     await expect(disabled.upload(file, 'g', { access: 'authenticated' })).rejects.toMatchObject({ status: 503 });
     expect(() => disabled.getPrivateDownloadUrl()).toThrow(expect.objectContaining({ status: 503, code: 'STORAGE_NOT_CONFIGURED' }));
+    await expect(disabled.copyToPublic()).rejects.toMatchObject({ status: 503, code: 'STORAGE_NOT_CONFIGURED' });
     await expect(disabled.remove()).resolves.toBeUndefined();
   });
 });
 
-describe('Backward compatibility – existing endpoints still use public storage', () => {
+describe('Backward compatibility – storage type per endpoint', () => {
   let adminAuth: string;
   beforeEach(async () => {
     await resetDatabase();
@@ -221,14 +280,18 @@ describe('Backward compatibility – existing endpoints still use public storage
     expect(storage.removedWith).toEqual([{ publicId: res.body.publicId, access: 'public' }]);
   });
 
-  it('event photos upload and delete (admin): public upload, public delete', async () => {
+  it('event photos (task 3): new uploads are private (authenticated); legacy public photos are still deleted as public', async () => {
     const event = await api.post('/api/events').set('Authorization', adminAuth).send(eventBody()).expect(201);
     const up = await api.post(`/api/events/${event.body.id}/photos`).set('Authorization', adminAuth).attach('photos', PNG_BUFFER, 'p.png');
     expect(up.status).toBe(201);
-    expect(storage.uploadAccess).toEqual(['public']);
-    expect(up.body[0].url).toMatch(/^https:\/\/cdn\.test\//);
+    expect(storage.uploadAccess).toEqual(['authenticated']);
+    expect(up.body[0].url).toMatch(/^https:\/\/private\.test\//);
 
     await api.delete(`/api/events/${event.body.id}/photos/${up.body[0].id}`).set('Authorization', adminAuth).expect(204);
-    expect(storage.removedWith).toEqual([{ publicId: up.body[0].publicId, access: 'public' }]);
+    expect(storage.removedWith).toEqual([{ publicId: up.body[0].publicId, access: 'authenticated' }]);
+
+    const legacy = await prisma.eventPhoto.create({ data: { eventId: event.body.id, url: 'https://cdn.test/old.png', publicId: 'old' } });
+    await api.delete(`/api/events/${event.body.id}/photos/${legacy.id}`).set('Authorization', adminAuth).expect(204);
+    expect(storage.removedWith.at(-1)).toEqual({ publicId: 'old', access: 'public' });
   });
 });

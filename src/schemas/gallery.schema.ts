@@ -4,11 +4,11 @@ import { eventTypeSchema, paginationSchema } from './common.schema';
 export const MAX_GALLERY_SORT_ORDER = 1000;
 
 /** ערך בוליאני ב-Query String או בשדה טקסט של multipart: רק "true" או "false" */
-const booleanString = (name: string) =>
+export const booleanString = (name: string) =>
   z.enum(['true', 'false'], { error: `${name} must be true or false` }).transform((value) => value === 'true');
 
-const titleSchema = z.string().trim().min(2, 'Title must be at least 2 characters').max(120);
-const sortOrderSchema = z
+export const titleSchema = z.string().trim().min(2, 'Title must be at least 2 characters').max(120);
+export const sortOrderSchema = z
   .number({ error: 'sortOrder must be a number' })
   .int('sortOrder must be a whole number')
   .min(0)

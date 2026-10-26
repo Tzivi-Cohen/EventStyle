@@ -43,7 +43,7 @@ describe('Swagger / OpenAPI', () => {
     await expect(SwaggerParser.validate(copy)).resolves.toBeTruthy();
   });
 
-  it('documents all 28 operations (17 required + 2 email verification + Google sign-in + profile edit + 4 package management + 3 gallery management)', () => {
+  it('documents all 33 operations (17 required + 2 email verification + Google sign-in + profile edit + 4 package management + 3 gallery management + 5 private photos)', () => {
     const operations = Object.entries(openApiDocument.paths).flatMap(([path, methods]) =>
       Object.keys(methods).map((method) => `${method.toUpperCase()} ${path}`),
     );
@@ -68,16 +68,33 @@ describe('Swagger / OpenAPI', () => {
         'GET /api/gallery/summary',
         'GET /api/admin/gallery',
         'GET /api/events',
-        'GET /api/events/my',        'GET /api/events/{id}',
+        'GET /api/events/my',
+        'GET /api/events/{id}',
         'POST /api/events',
         'PUT /api/events/{id}',
         'PATCH /api/events/{id}/status',
         'DELETE /api/events/{id}',
+        'GET /api/events/{id}/photos',
         'POST /api/events/{id}/photos',
+        'GET /api/events/{id}/photos/{photoId}',
         'DELETE /api/events/{id}/photos/{photoId}',
+        'PUT /api/events/{id}/photos/{photoId}/consent',
+        'POST /api/events/{id}/photos/{photoId}/publish',
+        'GET /api/admin/event-photos',
         'GET /api/health',
       ].sort(),
     );
+  });
+
+  it('every documented operation is registered in the server, and every protected one rejects guests (401)', async () => {
+    for (const [path, methods] of Object.entries(openApiDocument.paths)) {
+      const url = path.replace(/\{[^}]+\}/g, '1');
+      for (const [method, operation] of Object.entries(methods as Record<string, { security?: unknown[] }>)) {
+        const res = await (api as unknown as Record<string, (u: string) => Promise<{ status: number; body: { error?: { message?: string } } }>>)[method](url);
+        expect(res.body.error?.message ?? '', `${method.toUpperCase()} ${path}`).not.toMatch(/^Route .* not found$/);
+        if (operation.security) expect(res.status, `${method.toUpperCase()} ${path}`).toBe(401);
+      }
+    }
   });
 
   it('serves Swagger UI at /api-docs and the JSON at /api-docs.json', async () => {

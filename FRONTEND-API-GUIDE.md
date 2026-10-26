@@ -6,7 +6,7 @@
 **איך לקרוא את המדריך:**
 - פרקים 1–2: הגדרות חיבור ומשתמשים.
 - פרק 3: טיפוסי הנתונים.
-- פרק 4: כל 21 ה־Endpoints, אחד אחד.
+- פרק 4: כל 33 ה־Endpoints, אחד אחד.
 - פרקים 5–6: העלאת תמונות ושגיאות.
 - פרק 7: דוגמאות קוד.
 - פרק 8: מיפוי מסכים.
@@ -17,6 +17,11 @@
 > דוגמאות הקוד בפרק 7 הן נקודת פתיחה. התאימי אותן למבנה ולסגנון של הפרויקט שלך.
 
 > **מה חדש בגרסה הזו:**
+> - **תמונות אירוע פרטיות (פרק 4.7):** כל תמונה חדשה של אירוע נשמרת כקובץ פרטי, ונצפית רק דרך קישור זמני (10 דקות). **בעלת האירוע יכולה להעלות תמונות** לאירוע שלה, למחוק תמונות שהעלתה, ולתת או לבטל הסכמה לפרסום בגלריה. המנהלת מפרסמת תמונות שקיבלו הסכמה כעותק ציבורי נפרד. 5 Endpoints חדשים (29–33).
+> - ⚠️ **שינוי במבנה `EventPhoto`:** ללקוחה כבר לא נשלח `publicId`. נוספו `urlExpiresAt`, `isPrivate`, `publishConsent`, `publishedInGallery`, `uploadedByMe`, `canDelete`. `url` של תמונה פרטית הוא קישור זמני (ויכול להיות `null`). המנהלת מקבלת גם `publicId`, `storageType`, `uploadedById`, `galleryItemId`.
+> - **שגיאות חדשות:** `409 PHOTO_LIMIT_REACHED` (עד 50 תמונות לאירוע), `409 DUPLICATE_PHOTO`, `409 PUBLISH_CONSENT_REQUIRED`, `409 ALREADY_PUBLISHED`, `409 PHOTO_IN_GALLERY` (נדיר – לנסות שוב), `502 STORAGE_DELETE_FAILED`.
+> - **מחיקת תמונה או אירוע שפורסמו בגלריה** מסירה גם את העותק הציבורי (פרק 4.7).
+> - **`AdminGalleryItem`:** נוסף השדה `sourceEventPhotoId`.
 > - **אין יותר שליחת מיילים (Brevo הוסר):** קוד האימות לא נשלח למייל, אלא מודפס ביומן השרת (`EMAIL_PROVIDER=console`). ההרשמה, האימות והשליחה החוזרת ממשיכים לעבוד באותו מבנה בקשה ותשובה. שגיאת `502 EMAIL_SEND_FAILED` כבר לא קיימת (פרקים 2.2, 4.2 ו־6).
 > - **התחברות והרשמה עם Google:** `POST /auth/google` (פרקים 2.6, 4.2 ו־12).
 > - **עריכת פרופיל:** `PATCH /auth/me` (פרקים 2.7 ו־4.2).
@@ -425,9 +430,22 @@ export interface GallerySummaryItem {
 export interface EventPhoto {
   id: number;
   eventId: number;
-  url: string;
-  publicId: string | null;
+  url: string | null;                 // פרטית: קישור זמני (10 דקות). ישנה: קישור קבוע. null = אין קישור כרגע
+  urlExpiresAt: string | null;        // מתי הקישור מפסיק לעבוד. null בתמונה ישנה (ציבורית)
+  isPrivate: boolean;                 // true בכל תמונה חדשה
+  publishConsent: boolean;            // הסכמת בעלת האירוע לפרסום (ברירת מחדל false)
+  publishedInGallery: boolean;        // יש עותק מפורסם בגלריה
+  uploadedByMe: boolean;
+  canDelete: boolean;                 // מנהלת: תמיד. לקוחה: רק תמונות שהעלתה
   createdAt: string;
+}
+
+/** תמונת אירוע בתשובה למנהלת */
+export interface AdminEventPhoto extends EventPhoto {
+  publicId: string | null;
+  storageType: 'public' | 'authenticated';
+  uploadedById: number | null;
+  galleryItemId: number | null;       // העותק בגלריה (מפורסם או מוסתר)
 }
 
 export interface EventItem {          // השם Event תפוס בדפדפן, לכן EventItem
@@ -448,7 +466,7 @@ export interface EventItem {          // השם Event תפוס בדפדפן, ל�
   notes?: string | null;              // רק למנהלת. אצל לקוח השדה לא קיים
   userId: number | null;
   photoCount?: number;                // רק ברשימות (GET /events, GET /events/my)
-  photos?: EventPhoto[];              // רק באירוע בודד (GET/POST/PUT/PATCH)
+  photos?: EventPhoto[];              // רק באירוע בודד (GET/POST/PUT/PATCH). למנהלת: AdminEventPhoto[]
   createdAt: string;
   updatedAt: string;
 }
@@ -516,7 +534,7 @@ export interface ApiErrorBody {
 
 ## 4. כל ה־Endpoints
 
-### 4.1 טבלת סיכום (21 פעולות)
+### 4.1 טבלת סיכום (33 פעולות)
 
 | # | Method | URL | JWT | הרשאה | תפקיד |
 |---|---|---|---|---|---|
@@ -536,8 +554,8 @@ export interface ApiErrorBody {
 | 14 | PUT | `/events/:id` | ✔ | 👑 | עריכת אירוע (החלפה מלאה) |
 | 15 | PATCH | `/events/:id/status` | ✔ | 👑 | עדכון סטטוס |
 | 16 | DELETE | `/events/:id` | ✔ | 👑 | מחיקת אירוע |
-| 17 | POST | `/events/:id/photos` | ✔ | 👑 | העלאת תמונות לאירוע |
-| 18 | DELETE | `/events/:id/photos/:photoId` | ✔ | 👑 | מחיקת תמונת אירוע |
+| 17 | POST | `/events/:id/photos` | ✔ | 👑 או בעלת האירוע | **שונה:** העלאת תמונות פרטיות לאירוע |
+| 18 | DELETE | `/events/:id/photos/:photoId` | ✔ | 👑 / לקוחה – רק מה שהעלתה | **שונה:** מחיקת תמונת אירוע |
 | 19 | GET | `/health` | ✘ | 🌐 | בדיקת פעילות השרת ומסד הנתונים |
 | 20 | POST | `/auth/google` | ✘ | 🌐 | **חדש:** התחברות או הרשמה עם Google |
 | 21 | PATCH | `/auth/me` | ✔ | 👤 | **חדש:** עריכת הפרופיל של המשתמש המחובר |
@@ -548,8 +566,13 @@ export interface ApiErrorBody {
 | 26 | PATCH | `/gallery/:id` | ✔ | 👑 | **חדש:** עריכת פריט גלריה: כותרת, סוג, פרסום/הסתרה, מובילה, סדר |
 | 27 | GET | `/gallery/summary` | ✘ | 🌐 | **חדש:** לכל סוג אירוע – מספר תמונות מפורסמות ותמונת שער |
 | 28 | GET | `/admin/gallery` | ✔ | 👑 | **חדש:** כל פריטי הגלריה לניהול, כולל מוסתרים |
+| 29 | GET | `/events/:id/photos` | ✔ | 👑 או בעלת האירוע | **חדש:** תמונות האירוע עם קישורים זמניים |
+| 30 | GET | `/events/:id/photos/:photoId` | ✔ | 👑 או בעלת האירוע | **חדש:** תמונה אחת עם קישור זמני חדש |
+| 31 | PUT | `/events/:id/photos/:photoId/consent` | ✔ | בעלת האירוע בלבד | **חדש:** הסכמה / ביטול הסכמה לפרסום |
+| 32 | POST | `/events/:id/photos/:photoId/publish` | ✔ | 👑 | **חדש:** פרסום תמונה בגלריה כעותק נפרד |
+| 33 | GET | `/admin/event-photos` | ✔ | 👑 | **חדש:** תמונות אירוע לניהול (למשל ממתינות לפרסום) |
 
-> המספרים 20–28 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא של 20 ו־21 נמצא בפרק 4.2, אחרי `GET /auth/me`, של 22–25 בפרק 4.3, ושל 26–28 בפרק 4.4.
+> המספרים 20–33 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא של 20 ו־21 נמצא בפרק 4.2, אחרי `GET /auth/me`, של 22–25 בפרק 4.3, של 26–28 בפרק 4.4, ושל 29–33 בפרק 4.7.
 
 **כללים שחלים על כל ה־Endpoints:**
 - **Path Parameters:** `:id` ו־`:photoId` חייבים להיות מספרים שלמים חיוביים. אחרת מתקבל `400 VALIDATION_ERROR` עם `field: "id"` (או `"photoId"`).
@@ -1270,8 +1293,13 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
     {
       "id": 7,
       "eventId": 1,
-      "url": "https://res.cloudinary.com/<cloud>/image/upload/v1792909845/eventstyle/events/1/xyz.jpg",
-      "publicId": "eventstyle/events/1/xyz",
+      "url": "https://api.cloudinary.com/v1_1/<cloud>/image/download?api_key=...&expires_at=...&public_id=...&signature=...",
+      "urlExpiresAt": "2026-10-25T10:10:00.000Z",
+      "isPrivate": true,
+      "publishConsent": false,
+      "publishedInGallery": false,
+      "uploadedByMe": true,
+      "canDelete": true,
       "createdAt": "2026-10-25T10:00:00.000Z"
     }
   ],
@@ -1287,6 +1315,8 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | 401 | `UNAUTHORIZED` | לא מחובר |
 | 403 | `FORBIDDEN` | `You do not have access to this event`: לקוחה מנסה לפתוח אירוע של מישהו אחר |
 | 404 | `NOT_FOUND` | `Event not found` |
+
+> קישורי התמונות ב־`photos` זמניים (10 דקות). ראי פרק 4.7.
 
 #### 13. `POST /events` 👑 – יצירת אירוע
 
@@ -1376,13 +1406,19 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 
 - **Response `204`:** בלי גוף. **כל התמונות של האירוע נמחקות גם הן**, גם ממסד הנתונים וגם מ־Cloudinary.
 
-**שגיאות:** 400, 401, 403, 404.
+**שגיאות:** 400, 401, 403, 404, `502 STORAGE_DELETE_FAILED` (עותק בגלריה לא נמחק מהאחסון – האירוע לא נמחק, נסי שוב), `409 PHOTO_IN_GALLERY` (נדיר: עותק נוצר בזמן המחיקה – נסי שוב). ראי פרק 4.7.
 
 > כדאי להציג חלון אישור ("למחוק את האירוע?") לפני המחיקה, כי היא לא הפיכה.
 
-#### 17. `POST /events/:id/photos` 👑 – העלאת תמונות לאירוע
+#### 17. `POST /events/:id/photos` 👑 או בעלת האירוע – העלאת תמונות פרטיות
 
 `multipart/form-data`, עם השדה `photos` שמכיל 1–10 קבצים. פירוט בפרק 5.
+
+- **הרשאה:** מנהלת – כל אירוע. לקוחה – רק אירוע שמשויך אליה. ההרשאה נבדקת **לפני** שהקבצים מתקבלים.
+- **כל התמונות נשמרות כפרטיות.** התשובה מכילה קישור זמני בלבד.
+- **עד 50 תמונות לאירוע** (כל המעלים יחד). בקשה שתעבור את המגבלה נדחית כולה: `409 PHOTO_LIMIT_REACHED` עם `details: { limit, current, requested }`.
+- **אין כפילויות:** אותה תמונה פעמיים באותה בקשה, או תמונה שכבר קיימת באירוע (גם עם מטא־דאטה אחר) → `409 DUPLICATE_PHOTO`. כשהתמונה כבר קיימת: `details.duplicates: [{ file, photoId }]`.
+- "הכול או כלום": אם משהו נכשל, אף תמונה לא נשמרת.
 
 **Response `201`:** `EventPhoto[]`, רק התמונות החדשות.
 ```json
@@ -1390,26 +1426,124 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
   {
     "id": 8,
     "eventId": 1,
-    "url": "https://res.cloudinary.com/<cloud>/image/upload/v1792909900/eventstyle/events/1/p1.jpg",
-    "publicId": "eventstyle/events/1/p1",
+    "url": "https://api.cloudinary.com/v1_1/<cloud>/image/download?api_key=...&expires_at=...&public_id=...&signature=...",
+    "urlExpiresAt": "2026-10-25T10:15:00.000Z",
+    "isPrivate": true,
+    "publishConsent": false,
+    "publishedInGallery": false,
+    "uploadedByMe": true,
+    "canDelete": true,
     "createdAt": "2026-10-25T10:05:00.000Z"
   }
 ]
 ```
 
-**שגיאות:** 400, 401, 403, 404 (האירוע לא קיים), 413, 415, 502, 503.
+**שגיאות:** 400, 401, 403 (אירוע של לקוחה אחרת או בלי בעלים), 404 (האירוע לא קיים), 409 (`PHOTO_LIMIT_REACHED` / `DUPLICATE_PHOTO`), 413, 415, 502, 503.
 
-#### 18. `DELETE /events/:id/photos/:photoId` 👑 – מחיקת תמונת אירוע
+#### 18. `DELETE /events/:id/photos/:photoId` – מחיקת תמונת אירוע
 
 - **Path:** `id` (האירוע) ו־`photoId` (התמונה).
-- **Response `204`:** בלי גוף.
+- **הרשאה:** מנהלת – כל תמונה. בעלת האירוע – רק תמונות שהיא העלתה (`canDelete`).
+- **Response `204`:** בלי גוף. הקובץ נמחק גם מ־Cloudinary.
 
 **שגיאות:**
 | HTTP | מתי |
 |---|---|
 | 400 | `id` או `photoId` לא מספר |
-| 401 / 403 | לא מחובר, או לא Admin |
+| 401 | לא מחובר |
+| 403 | אירוע של מישהו אחר, או `You can delete only photos you uploaded` |
 | 404 | `Photo not found for this event`: התמונה לא קיימת, או שייכת לאירוע אחר |
+| 409 | `PHOTO_IN_GALLERY`: נדיר – עותק נוצר בגלריה בזמן המחיקה. לנסות שוב |
+| 502 | `STORAGE_DELETE_FAILED`: העותק הציבורי לא נמחק מהאחסון. התמונה לא נמחקה; לנסות שוב (ראי פרק 4.7) |
+
+### 4.7 תמונות אירוע פרטיות, הסכמה ופרסום בגלריה
+
+**עקרונות:**
+- **כל תמונה חדשה של אירוע היא פרטית** – גם אם המנהלת העלתה אותה. הקובץ נשמר ב־Cloudinary כ־`authenticated`, ואין לו קישור ציבורי.
+- **צפייה רק בקישור זמני:** בכל תשובה שמכילה תמונה, השרת יוצר קישור חתום חדש (`url`), תקף **10 דקות** (`urlExpiresAt`). הקישור נוצר רק אחרי אימות ה־JWT ובדיקת בעלות או הרשאת מנהלת.
+- **אל תשמרי את הקישור** (לא ב־`localStorage` ולא במסד). כשהוא פג – בקשי שוב את התמונה (`GET /events/:id/photos/:photoId`) או את הרשימה.
+- הקישור הזמני מכיל את מזהה הקובץ, חתימה ותאריך תפוגה. בלי חתימה תקפה Cloudinary מחזיר 401, ושינוי התפוגה שובר את החתימה.
+- **מי רשאי:** מנהלת – כל אירוע. לקוחה – רק אירוע שמשויך אליה (`userId`). **אירוע בלי בעלים – למנהלת בלבד.** אירוע של לקוחה אחרת → `403`; אירוע שלא קיים → `404`.
+- **תמונות ישנות (ציבוריות):** תמונות שהועלו לפני השינוי ממשיכות לעבוד: `isPrivate: false`, `url` הוא הקישור הקבוע, ו־`urlExpiresAt: null`.
+
+| # | Method | URL | הרשאה | תפקיד |
+|---|---|---|---|---|
+| 29 | GET | `/events/:id/photos` | 👑 או בעלת האירוע | כל התמונות של האירוע, עם קישורים זמניים |
+| 17 | POST | `/events/:id/photos` | 👑 או בעלת האירוע | העלאת תמונות פרטיות (ראי 17 למעלה) |
+| 30 | GET | `/events/:id/photos/:photoId` | 👑 או בעלת האירוע | תמונה אחת עם קישור חדש (רענון קישור שפג) |
+| 18 | DELETE | `/events/:id/photos/:photoId` | 👑 כל תמונה / לקוחה – רק מה שהעלתה | מחיקת תמונה (וגם העותק שלה בגלריה) |
+| 31 | PUT | `/events/:id/photos/:photoId/consent` | בעלת האירוע **בלבד** | הסכמה / ביטול הסכמה לפרסום |
+| 32 | POST | `/events/:id/photos/:photoId/publish` | 👑 | פרסום בגלריה כעותק ציבורי נפרד |
+| 33 | GET | `/admin/event-photos` | 👑 | תמונות לניהול, למשל כאלה שממתינות לפרסום |
+
+#### 29. `GET /events/:id/photos` – כל התמונות של אירוע
+
+**Response `200`:** `EventPhoto[]` (למנהלת `AdminEventPhoto[]`), מהישנה לחדשה. אותן תמונות מוחזרות גם בשדה `photos` של `GET /events/:id`.
+
+אם אי אפשר ליצור קישור כרגע (למשל Cloudinary לא מוגדר), התמונה מוחזרת עם `url: null` – הציגי מקום ריק.
+
+**שגיאות:** 400, 401, 403 (`You do not have access to this event`), 404 (`Event not found`).
+
+#### 30. `GET /events/:id/photos/:photoId` – תמונה אחת עם קישור חדש
+
+לשימוש כשקישור פג (למשל בתצוגת תמונה מוגדלת שנשארה פתוחה). **Response `200`:** `EventPhoto`.
+
+**שגיאות:** 400, 401, 403, 404 (`Photo not found for this event` – גם כשהתמונה שייכת לאירוע אחר), 503 (`STORAGE_NOT_CONFIGURED`).
+
+#### 31. `PUT /events/:id/photos/:photoId/consent` – הסכמה לפרסום (בעלת האירוע בלבד)
+
+**Request Body:**
+```json
+{ "publishConsent": true }
+```
+- `true` – הלקוחה מסכימה שהתמונה **עשויה** להתפרסם בגלריה. הפרסום עצמו נעשה רק בידי המנהלת.
+- `false` – ביטול ההסכמה. אם כבר נוצר עותק בגלריה, הוא **מוסתר מיד ונמחק** (מהגלריה ומ־Cloudinary, כולל ניקוי ה־CDN). אם המחיקה ב־Cloudinary נכשלת, העותק נשאר מוסתר ואי אפשר לפרסם אותו שוב; שליחה חוזרת של `false` מנסה שוב.
+- ברירת המחדל לכל תמונה: `false`. תמונה לא מתפרסמת אף פעם אוטומטית.
+- אפשר לתת הסכמה גם לתמונות שהמנהלת העלתה לאירוע של הלקוחה.
+- **גם המנהלת לא יכולה לשנות הסכמה** (`403 Only the event owner can change the publish consent`).
+
+**Response `200`:** `EventPhoto` המעודכן.
+
+**שגיאות:** 400 (`publishConsent` חסר, לא boolean, או שדה מיותר), 401, 403, 404.
+
+#### 32. `POST /events/:id/photos/:photoId/publish` 👑 – פרסום בגלריה
+
+**Request Body:**
+| שדה | טיפוס | חובה | ברירת מחדל |
+|---|---|---|---|
+| `title` | string | ✔ | 2–120 תווים |
+| `category` | EventType | ✘ | סוג האירוע |
+| `isPublished` | boolean | ✘ | `true`. `false` = העותק נוצר מוסתר (טיוטה) |
+| `isFeatured` | boolean | ✘ | `false` |
+| `sortOrder` | number | ✘ | `0` (0–1000) |
+
+- מחייב הסכמה בתוקף של בעלת האירוע.
+- נוצר **עותק ציבורי חדש ונפרד** ב־Cloudinary. קובץ המקור נשאר פרטי ולא נחשף. פריט הגלריה מקושר לתמונה בשדה `sourceEventPhotoId` (מוצג למנהלת בלבד).
+- תמונה מתפרסמת פעם אחת לכל היותר, גם אם נשלחות כמה בקשות במקביל.
+- אחרי הפרסום הפריט מנוהל כמו כל פריט גלריה: `PATCH /gallery/:id` (הסתרה, כותרת, סדר...) ו־`DELETE /gallery/:id` (מחיקת העותק בלבד – תמונת המקור וההסכמה לא משתנות). עותק שההסכמה שלו בוטלה לא יכול לחזור לפרסום (`409 PUBLISH_CONSENT_REQUIRED`).
+
+**Response `201`:** `AdminGalleryItem` (העותק), עם `sourceEventPhotoId`.
+
+**שגיאות:** 400, 401, 403, 404, `409 PUBLISH_CONSENT_REQUIRED` (אין הסכמה), `409 ALREADY_PUBLISHED` (כבר יש עותק – `details.galleryItemId`), 502 (`UPLOAD_FAILED`), 503.
+
+#### 33. `GET /admin/event-photos` 👑 – תמונות לניהול
+
+**Query (הכול רשות):** `eventId`, `publishConsent` (`true`/`false`), `inGallery` (`true` = יש עותק בגלריה, מפורסם או מוסתר), `page`, `limit`.
+
+לדוגמה, תמונות שקיבלו הסכמה וממתינות לפרסום: `GET /admin/event-photos?publishConsent=true&inGallery=false`.
+
+**Response `200`:** `Paginated<AdminEventPhoto & { event: { id, eventName, eventType, clientName } }>`, מהחדשה לישנה.
+
+**שגיאות:** 400, 401, 403.
+
+#### מחיקה כשיש עותק בגלריה
+
+- **מחיקת תמונה שפורסמה** (`DELETE /events/:id/photos/:photoId`) ו**מחיקת אירוע** (`DELETE /events/:id`) מסירות גם את העותקים הציבוריים בגלריה. ההרשאות לא השתנו: לקוחה מוחקת רק תמונות שהעלתה.
+- הסדר: ההסכמה מבוטלת והעותק מוסתר מיד → העותק נמחק מ־Cloudinary (כולל ניקוי ה־CDN) ומהגלריה → רק אז נמחקת תמונת המקור (או האירוע).
+- **אם המחיקה ב־Cloudinary נכשלת:** `502 STORAGE_DELETE_FAILED` (`details.galleryItemIds`). התמונה או האירוע **לא** נמחקים, העותק נשאר מוסתר ולא ניתן לפרסום מחדש. הציגי "המחיקה לא הושלמה, נסי שוב" – שליחה חוזרת ממשיכה מאותה נקודה.
+- `409 PHOTO_IN_GALLERY` מתקבל רק במקרה נדיר שבו עותק חדש נוצר בגלריה בזמן המחיקה. שום דבר לא נמחק; נסי שוב.
+- `DELETE /gallery/:id` על עותק מוחק רק את העותק – תמונת המקור וההסכמה לא משתנות. גם כאן כשל באחסון מחזיר `502 STORAGE_DELETE_FAILED`, והפריט נשאר מוסתר.
+- פריטי גלריה שהמנהלת העלתה ישירות (ללא תמונת מקור) לא מושפעים ממחיקת תמונות או אירועים.
 
 ---
 
@@ -1438,11 +1572,13 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | | גלריה | תמונות אירוע |
 |---|---|---|
 | Endpoint | `POST /gallery` | `POST /events/:id/photos` |
-| הרשאה | 👑 Admin | 👑 Admin |
+| הרשאה | 👑 Admin | 👑 Admin או בעלת האירוע |
 | סוג הבקשה | `multipart/form-data` | `multipart/form-data` |
 | שדה הקובץ | `image`: **קובץ אחד** | `photos`: **1–10 קבצים** באותו שם שדה |
 | שדות נוספים | `title`, `category` (חובה). `isPublished`, `isFeatured`, `sortOrder` (רשות) | אין |
 | תיקייה ב־Cloudinary | `eventstyle/gallery` | `eventstyle/events/<id>` |
+| סוג אחסון | ציבורי (קישור קבוע) | **פרטי** (קישור זמני, 10 דקות) |
+| מגבלה | – | עד 50 תמונות לאירוע, בלי כפילויות |
 | תגובה | `201` + `AdminGalleryItem` | `201` + `EventPhoto[]` |
 | מחיקה | `DELETE /gallery/:id` | `DELETE /events/:id/photos/:photoId` |
 
@@ -1474,7 +1610,8 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | שלב | HTTP | code | message לדוגמה |
 |---|---|---|---|
 | 1. התחברות | 401 | `UNAUTHORIZED` | `Missing Bearer token` |
-| 2. תפקיד | 403 | `FORBIDDEN` | `You do not have permission to perform this action` |
+| 2. תפקיד / בעלות | 403 | `FORBIDDEN` | `You do not have permission to perform this action` / `You do not have access to this event` |
+| 2. האירוע לא קיים / מלא (תמונות אירוע) | 404 / 409 | `NOT_FOUND` / `PHOTO_LIMIT_REACHED` | `Event not found` / `An event can have at most 50 photos (currently 50)` |
 | 3. סוג קובץ | 415 | `UNSUPPORTED_FILE_TYPE` | `Unsupported file type. Allowed: image/jpeg, image/png, image/webp` |
 | 3. גודל קובץ | 413 | `FILE_TOO_LARGE` | `File is too large (max 5MB)` |
 | 3. שם שדה שגוי / יותר מ־10 קבצים | 400 | `VALIDATION_ERROR` | `Upload error: Unexpected file field` או `Upload error: Too many files` |
@@ -1482,17 +1619,18 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | 4. חתימת קובץ | 415 | `UNSUPPORTED_FILE_TYPE` | `File "x.png" is not a valid image/png image` |
 | 4. עיבוד התמונה | 415 / 413 | `UNSUPPORTED_FILE_TYPE` / `FILE_TOO_LARGE` | `File "x.jpg" could not be processed as an image` / `Image "x.jpg" has too many pixels` |
 | 5. שדות טקסט (גלריה) | 400 | `VALIDATION_ERROR` | `details: [{ "field": "title", ... }]` |
-| 6. האירוע לא קיים | 404 | `NOT_FOUND` | `Event not found` |
+| 6. כפילות / מגבלה (תמונות אירוע) | 409 | `DUPLICATE_PHOTO` / `PHOTO_LIMIT_REACHED` | `This photo was already uploaded to this event` |
 | 7. Cloudinary לא מוגדר בשרת | 503 | `STORAGE_NOT_CONFIGURED` | `Image storage is not configured on the server ...` |
 | 7. Cloudinary דחה את ההעלאה | 502 | `UPLOAD_FAILED` | `Image upload failed, please try again later` |
 
 ### 5.5 הצגת תמונות ב־React
 
-- **השדה להצגה:** `url`. כתובת `https` מלאה, ציבורית. אפשר לשים אותה ישירות ב־`<img src>`, בלי Token.
+- **השדה להצגה:** `url`. כתובת `https` מלאה. אפשר לשים אותה ישירות ב־`<img src>`, בלי Token.
+- **תמונות אירוע פרטיות:** `url` הוא קישור זמני (10 דקות, `urlExpiresAt`). אחרי שפג – בקשי שוב את התמונה או את הרשימה (פרק 4.7). אל תשמרי אותו. הטיפ `thumb()` למטה לא מתאים לקישורים האלה (הוא מחזיר אותם בלי שינוי).
 - **שימי לב:** "מוסתרת" (`isPublished: false`) פירושו שהתמונה לא מופיעה בנתיבים הציבוריים. הקובץ עצמו עדיין נגיש למי שמחזיק את הקישור – הסתרה אינה הגנה על תמונה פרטית.
-- **`publicId`:** מזהה פנימי של Cloudinary. לא צריך אותו לתצוגה או למחיקה, כי המחיקה נעשית לפי `id`.
+- **`publicId`:** מזהה פנימי של Cloudinary. לא צריך אותו לתצוגה או למחיקה, כי המחיקה נעשית לפי `id`. בתמונות אירוע הוא נשלח למנהלת בלבד.
 - **נתוני ה־Seed:** תמונות הגלריה וחבילות ה־Seed משתמשות בכתובות `picsum.photos` עם `publicId: null`. הן מוצגות בדיוק באותה דרך.
-- **`coverImageUrl` של אירוע:** טקסט חופשי (כתובת URL) שהמנהלת מזינה בטופס. **אין Endpoint נפרד להעלאת תמונת שער.** אפשרות אחת: להעלות תמונה לאירוע ואז להעתיק את ה־`url` שלה ל־`coverImageUrl` בעריכה.
+- **`coverImageUrl` של אירוע:** טקסט חופשי (כתובת URL) שהמנהלת מזינה בטופס. **אין Endpoint נפרד להעלאת תמונת שער.** ⚠️ אל תעתיקי ל־`coverImageUrl` את ה־`url` של תמונת אירוע פרטית – הוא זמני ויפסיק לעבוד אחרי 10 דקות.
 
 ```tsx
 <img src={item.url} alt={item.title} loading="lazy" />
@@ -1513,7 +1651,7 @@ export function thumb(url: string, width = 600): string {
 | מה | Endpoint | תשובה |
 |---|---|---|
 | פריט גלריה | `DELETE /gallery/:id` | `204` |
-| תמונת אירוע | `DELETE /events/:id/photos/:photoId` | `204` |
+| תמונת אירוע | `DELETE /events/:id/photos/:photoId` | `204` (גם העותק שלה בגלריה נמחק; `502 STORAGE_DELETE_FAILED` אם מחיקת העותק נכשלה) |
 | כל התמונות של אירוע | נמחקות אוטומטית ב־`DELETE /events/:id` | `204` |
 
 - המחיקה מוחקת גם את הרשומה וגם את הקובץ ב־Cloudinary.
@@ -1558,13 +1696,19 @@ export function thumb(url: string, width = 600): string {
 | 403 | `FORBIDDEN` | מחובר, אבל אין הרשאה: לקוחה בנתיב של מנהלת, או אירוע של מישהו אחר | "אין לך הרשאה", או חזרה לדף הקודם |
 | 404 | `NOT_FOUND` | הרשומה או הנתיב לא קיימים | "לא נמצא" |
 | 409 | `CONFLICT` | האימייל כבר רשום, או כבר מאומת. ב־Google: חשבון קיים שאי אפשר לקשר אוטומטית (ראי 2.6) | הודעה מתאימה, למשל קישור להתחברות עם סיסמה. אפשר להציג את `message` |
+| 409 | `PHOTO_LIMIT_REACHED` | האירוע יעבור את 50 התמונות | "אפשר להעלות עד 50 תמונות לאירוע" (`details.current`, `details.limit`) |
+| 409 | `DUPLICATE_PHOTO` | התמונה כבר קיימת באירוע, או נשלחה פעמיים | "התמונה כבר הועלתה" (`details.duplicates[].file`) |
+| 409 | `PUBLISH_CONSENT_REQUIRED` | פרסום (או החזרה לפרסום) בלי הסכמה של בעלת האירוע | "אין הסכמה לפרסום התמונה" |
+| 409 | `ALREADY_PUBLISHED` | לתמונה כבר יש עותק בגלריה | "התמונה כבר בגלריה" (`details.galleryItemId`) |
+| 409 | `PHOTO_IN_GALLERY` | נדיר: עותק נוצר בגלריה בזמן מחיקת התמונה או האירוע. שום דבר לא נמחק | "נסי שוב" |
+| 502 | `STORAGE_DELETE_FAILED` | מחיקת תמונה, אירוע או עותק בגלריה: העותק הציבורי לא נמחק מ־Cloudinary. העותק מוסתר, ושום דבר אחר לא נמחק | "המחיקה לא הושלמה, נסי שוב" |
 | 413 | `FILE_TOO_LARGE` | קובץ גדול מ־5MB, או גוף JSON גדול מ־100KB | "הקובץ גדול מדי (עד 5MB)" |
 | 415 | `UNSUPPORTED_FILE_TYPE` | הקובץ אינו JPEG, PNG או WEBP, או שאינו תמונה אמיתית | "ניתן להעלות רק JPEG, PNG או WEBP" |
 | 429 | `TOO_MANY_REQUESTS` | יותר מדי בקשות | אם יש `details.retryAfterSeconds`, הציגי ספירה לאחור. אחרת: "נסי שוב בעוד כמה דקות" |
 | 500 | `INTERNAL_ERROR` | תקלה לא צפויה בשרת | "אירעה שגיאה, נסי שוב" |
 | 502 | `UPLOAD_FAILED` | Cloudinary דחה את ההעלאה | "העלאת התמונה נכשלה, נסי שוב" |
 | 502 | `GOOGLE_UNAVAILABLE` | השרת לא הצליח לפנות ל־Google לאימות | "נסי שוב בעוד רגע" |
-| 503 | `STORAGE_NOT_CONFIGURED` | Cloudinary לא מוגדר בשרת | "העלאת תמונות אינה זמינה כרגע" |
+| 503 | `STORAGE_NOT_CONFIGURED` | Cloudinary לא מוגדר בשרת (העלאה, או קישור לתמונה פרטית) | "העלאת תמונות אינה זמינה כרגע" |
 | 503 | `GOOGLE_AUTH_NOT_CONFIGURED` | `GOOGLE_CLIENT_ID` לא מוגדר בשרת | "התחברות עם Google אינה זמינה כרגע" |
 | – | (אין תשובה) | השרת כבוי, או שהבקשה נחסמה ב־CORS | fetch זורק `TypeError`. הציגי "אין חיבור לשרת" |
 
@@ -1731,7 +1875,8 @@ export function fieldErrors(error: unknown): Record<string, string> {
 import { apiRequest, buildQuery } from './apiClient';
 import type {
   AuthResult, GoogleAuthResult, User, ProfileUpdate, Package, GalleryItem, GalleryFilters,
-  EventItem, EventInput, EventFilters, EventPhoto, EventStatus, EventType, PageParams, Paginated,
+  EventItem, EventInput, EventFilters, EventPhoto, AdminEventPhoto, EventStatus, EventType, PageParams, Paginated,
+  AdminGalleryItem,
 } from '../types/api';
 
 export const authApi = {
@@ -1783,6 +1928,22 @@ export const eventsApi = {
   },
   removePhoto: (id: number, photoId: number) =>
     apiRequest<void>(`/events/${id}/photos/${photoId}`, { method: 'DELETE' }),
+  photos: (id: number) => apiRequest<EventPhoto[]>(`/events/${id}/photos`),
+  /** קישור זמני חדש לתמונה אחת (אחרי שהקודם פג) */
+  photo: (id: number, photoId: number) => apiRequest<EventPhoto>(`/events/${id}/photos/${photoId}`),
+  /** בעלת האירוע בלבד */
+  setConsent: (id: number, photoId: number, publishConsent: boolean) =>
+    apiRequest<EventPhoto>(`/events/${id}/photos/${photoId}/consent`, { method: 'PUT', body: { publishConsent } }),
+  /** מנהלת בלבד */
+  publishPhoto: (id: number, photoId: number, data: { title: string; category?: EventType; isPublished?: boolean; isFeatured?: boolean; sortOrder?: number }) =>
+    apiRequest<AdminGalleryItem>(`/events/${id}/photos/${photoId}/publish`, { method: 'POST', body: data }),
+};
+
+export const adminPhotosApi = {
+  list: (params: PageParams & { eventId?: number; publishConsent?: boolean; inGallery?: boolean } = {}) =>
+    apiRequest<Paginated<AdminEventPhoto & { event: { id: number; eventName: string; eventType: EventType; clientName: string } }>>(
+      `/admin/event-photos${buildQuery({ ...params })}`,
+    ),
 };
 
 /** ממיר אירוע מהשרת לגוף תקין ל־PUT (רק שדות מותרים, כולל notes ו־coverImageUrl הקיימים) */
@@ -1923,8 +2084,18 @@ async function handleUpload(eventId: number, fileList: FileList | null) {
 
 // <input type="file" multiple accept="image/jpeg,image/png,image/webp"
 //        onChange={(e) => handleUpload(event.id, e.target.files)} disabled={uploading} />
-// {photos.map((p) => <img key={p.id} src={p.url} alt="" loading="lazy" />)}
+// {photos.map((p) => p.url ? <img key={p.id} src={p.url} alt="" loading="lazy" /> : <div key={p.id} className="placeholder" />)}
 ```
+
+**קישור שפג (תמונות פרטיות):** הקישור תקף 10 דקות. אם התמונה נכשלת בטעינה (`onError`), בקשי קישור חדש:
+```tsx
+async function refreshPhoto(eventId: number, photoId: number) {
+  const fresh = await eventsApi.photo(eventId, photoId);
+  setPhotos((prev) => prev.map((p) => (p.id === photoId ? fresh : p)));
+}
+// <img src={p.url ?? ''} onError={() => refreshPhoto(event.id, p.id)} />
+```
+בעמוד שנשאר פתוח זמן רב אפשר גם לטעון מחדש את `eventsApi.photos(eventId)` לפני `urlExpiresAt`.
 
 ### 7.7 Loading ו־Error בטעינת נתונים
 
@@ -2166,10 +2337,11 @@ function AdminEventsTable() {
 | **טעינת האפליקציה** (ללא מסך) | שחזור התחברות אחרי רענון | `GET /auth/me` | – | – | Token שמור |
 | **הפרופיל שלי** `/profile` | צפייה בפרטים ועריכתם | `GET /auth/me`, `PATCH /auth/me` | `fullName`, `phone`, `address` (ניתנים לעריכה), `email` (לקריאה בלבד), `role`, `emailVerified`, `googleLinked` | שמירת שם, טלפון וכתובת, ומחיקת כתובת | 👤 (Client או Admin) |
 | **האירועים שלי** `/my-events` | הלקוחה רואה את האירועים שלה | `GET /events/my?page=...&limit=...` | `eventName`, `eventDate`, `eventType`, `status`, `package.name`, `photoCount` + פקדי עמודים | מעבר לפרטי אירוע, מעבר בין עמודים | 👤 |
-| **פרטי האירוע שלי** `/my-events/:id` | סטטוס ההכנות ותמונות | `GET /events/:id` | כל פרטי האירוע (בלי `notes`), `status` כפס התקדמות, `photos[]` | צפייה בתמונות | 👤 בעלת האירוע |
+| **פרטי האירוע שלי** `/my-events/:id` | סטטוס ההכנות ותמונות | `GET /events/:id`, `POST /events/:id/photos`, `GET /events/:id/photos/:photoId`, `DELETE /events/:id/photos/:photoId`, `PUT /events/:id/photos/:photoId/consent` | כל פרטי האירוע (בלי `notes`), `status` כפס התקדמות, `photos[]` (קישורים זמניים), סימון "בגלריה" לפי `publishedInGallery` | צפייה בתמונות, העלאה (עד 50), מחיקת תמונות שהעלתה (`canDelete`), מתג "מסכימה לפרסום" לכל תמונה | 👤 בעלת האירוע |
 | **ניהול אירועים** `/admin/events` | טבלת כל האירועים | `GET /events?...&page=...&limit=...`, `GET /packages` (למסנן החבילה), `PATCH /events/:id/status`, `DELETE /events/:id` | טבלה: שם אירוע, לקוח, תאריך, סוג, חבילה, תקציב, סטטוס, מספר תמונות + "עמוד X מתוך Y" ו־`totalItems` | חיפוש, סינון (סוג, סטטוס, חבילה), מיון (תאריך, תקציב, שם לקוח), מעבר בין עמודים, שינוי סטטוס, מחיקה, מעבר ליצירה או עריכה | 👑 |
 | **אירוע חדש** `/admin/events/new` | יצירת אירוע | `GET /packages`, `POST /events` | טופס עם כל שדות `EventInput` | שמירה | 👑 |
-| **עריכת אירוע** `/admin/events/:id/edit` | עריכה וניהול תמונות | `GET /events/:id`, `GET /packages`, `PUT /events/:id`, `POST /events/:id/photos`, `DELETE /events/:id/photos/:photoId` | טופס מלא עם הערכים הקיימים (כולל `notes`), תמונות האירוע | שמירה, העלאת תמונות, מחיקת תמונה | 👑 |
+| **עריכת אירוע** `/admin/events/:id/edit` | עריכה וניהול תמונות | `GET /events/:id`, `GET /packages`, `PUT /events/:id`, `POST /events/:id/photos`, `DELETE /events/:id/photos/:photoId`, `POST /events/:id/photos/:photoId/publish` | טופס מלא עם הערכים הקיימים (כולל `notes`), תמונות האירוע, סימון "יש הסכמה" (`publishConsent`) ו"בגלריה" (`galleryItemId`) | שמירה, העלאת תמונות, מחיקת תמונה, פרסום תמונה שיש לה הסכמה | 👑 |
+| **תמונות לפרסום** `/admin/event-photos` | תמונות שקיבלו הסכמה וממתינות לפרסום | `GET /admin/event-photos?publishConsent=true&inGallery=false`, `POST /events/:id/photos/:photoId/publish` | רשת תמונות עם שם האירוע והלקוחה (`event`) | פרסום בגלריה (כותרת, סוג, מובילה, סדר) | 👑 |
 | **ניהול גלריה** `/admin/gallery` | ניהול כל העבודות | `GET /admin/gallery?...`, `POST /gallery`, `PATCH /gallery/:id`, `DELETE /gallery/:id` | רשת תמונות כולל מוסתרות (סימון "מוסתרת" לפי `isPublished`, "מובילה" לפי `isFeatured`), סינון לפי סוג/פרסום/מובילה, פקדי עמודים, טופס הוספה (`image`, `title`, `category` + רשות) | העלאה, עריכת כותרת וסוג, פרסום/הסתרה, סימון מובילה, שינוי סדר, מחיקה לצמיתות | 👑 |
 | **אין הרשאה / לא נמצא** | הודעה כשהשרת מחזיר 403 או 404 | – | הודעה וקישור חזרה | – | – |
 
@@ -2183,6 +2355,8 @@ function AdminEventsTable() {
 | מחיקת אירוע | `204` | הסרת השורה לפי `id` |
 | העלאת תמונות | `201` + מערך התמונות החדשות | הוספה לסוף מערך `photos` |
 | מחיקת תמונה | `204` | הסרה מ־`photos` לפי `id` |
+| הסכמה / ביטול הסכמה | `200` + התמונה המעודכנת | החלפת התמונה ב־`photos` לפי `id` |
+| פרסום תמונה בגלריה | `201` + פריט הגלריה | עדכון התמונה (`GET /events/:id/photos/:photoId`) והסרתה מרשימת "ממתינות לפרסום" |
 | הוספה לגלריה | `201` + הפריט החדש | טעינה מחדש של `GET /admin/gallery` (המיקום תלוי ב־`sortOrder`) |
 | עריכת פריט גלריה | `200` + הפריט המעודכן | החלפת הפריט לפי `id`. אם השתנו `sortOrder`, `category` או `isPublished` – טעינה מחדש של הרשימה |
 | מחיקה מהגלריה | `204` | הסרה לפי `id` |
@@ -2229,8 +2403,10 @@ function AdminEventsTable() {
 | **טופס "צור קשר"** | אין | – |
 | **שליחת מיילים** (קוד אימות, התראות) | אין. אין שירות מיילים חיצוני; קוד האימות מודפס ביומן השרת | לא להבטיח למשתמשת שתקבל מייל |
 | **החלפת הקובץ של פריט גלריה** | אין. `PATCH` משנה רק פרטים | העלאת פריט חדש ומחיקת הישן |
-| **העלאת תמונות על ידי לקוחה** | אין עדיין. רק המנהלת מעלה תמונות | – |
-| **העלאת תמונת שער (`coverImageUrl`)** | אין Endpoint נפרד. זה שדה טקסט (URL) | הזנת כתובת, או העתקת `url` של תמונת אירוע שהועלתה |
+| **פרסום ישיר בידי לקוחה** | אין. הלקוחה נותנת הסכמה, ורק המנהלת מפרסמת | – |
+| **קישור קבוע לתמונת אירוע פרטית** | אין, בכוונה. רק קישורים זמניים | לבקש קישור חדש כשפג |
+| **תוקף קישור אחר מ־10 דקות** | אין פרמטר כזה ב־API | – |
+| **העלאת תמונת שער (`coverImageUrl`)** | אין Endpoint נפרד. זה שדה טקסט (URL) | הזנת כתובת קבועה (לא קישור זמני של תמונה פרטית) |
 | **חיפוש בשדות נוספים** | החיפוש הוא רק בשם האירוע ובשם הלקוח | – |
 
 ---
@@ -2241,14 +2417,14 @@ function AdminEventsTable() {
 
 | בדיקה | תוצאה |
 |---|---|
-| כל הנתיבים ב־`src/routes/index.ts` מתועדים במדריך | ✅ 21 מתוך 21 |
+| כל הנתיבים ב־`src/routes/index.ts` מתועדים במדריך | ✅ 33 מתוך 33 |
 | כל הנתיבים במדריך קיימים בשרת | ✅ אין Endpoints מומצאים |
 | שדות הבקשה תואמים ל־Zod Schemas (`src/schemas/*`) | ✅ שמות, חובה או רשות, טווחים והודעות שגיאה |
-| שדות התגובה תואמים ל־`src/utils/mappers.ts` | ✅ כולל `notes` רק למנהלת, `photoCount` רק ברשימות ו־`photos` רק באירוע בודד |
+| שדות התגובה תואמים ל־`src/utils/mappers.ts` | ✅ כולל `notes` רק למנהלת, `photoCount` רק ברשימות, `photos` רק באירוע בודד, ושדות האחסון של תמונה (`publicId`, `storageType`...) רק למנהלת |
 | הרשאות תואמות ל־Middleware (`authenticate`, `requireAdmin`) ולבדיקת הבעלות ב־Service | ✅ |
 | מגבלות העלאה תואמות ל־`src/middleware/upload.ts` | ✅ |
 | קודי השגיאה תואמים ל־`HttpError` ול־`errorHandler` | ✅ |
-| התאמה ל־Swagger (`/api-docs`, `docs/openapi.json`) | ✅ אותן 21 פעולות, אותם נתיבים, Methods, הרשאות ומבני נתונים, כולל `Pagination`, `GoogleLoginRequest` ו־`UpdateProfileRequest` |
+| התאמה ל־Swagger (`/api-docs`, `docs/openapi.json`) | ✅ אותן 33 פעולות, אותם נתיבים, Methods, הרשאות ומבני נתונים, כולל `Pagination`, `GoogleLoginRequest` ו־`UpdateProfileRequest` |
 | מבנה הרשימות (`{ data, pagination }`) תואם ל־`src/utils/pagination.ts` | ✅ |
 | כללי Google ותוצאות הקישור תואמים ל־`src/services/auth.service.ts` ול־`src/auth/googleToken.ts` | ✅ |
 

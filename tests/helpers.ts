@@ -5,9 +5,11 @@ import { prisma } from '../src/db/prisma';
 import { hashPassword } from '../src/auth/password';
 import { signAccessToken } from '../src/auth/jwt';
 import { setMailer, type Mailer } from '../src/services/email/mailer';
+import { HttpError } from '../src/errors/HttpError';
 import {
   PRIVATE_DOWNLOAD_TTL_SECONDS,
   setImageStorage,
+  type CopySource,
   type ImageAccess,
   type ImageStorage,
   type PrivateDownloadLink,
@@ -38,12 +40,36 @@ export class FakeStorage implements ImageStorage {
   files: Express.Multer.File[] = [];
   /** סוג האחסון של כל העלאה (לפי הסדר) */
   uploadAccess: ImageAccess[] = [];
+  /** מקורות ההעתקה לעותק ציבורי (לפי הסדר) */
+  copies: CopySource[] = [];
+  /** הדמיית כשלים: ההעלאה ה-n (1 = הראשונה) נכשלת, העתקה נכשלת, מחיקה נכשלת */
+  failUploadAt: number | null = null;
+  failCopy = false;
+  failRemove = false;
+  /** מחיקה נכשלת רק לקבצים האלה */
+  failRemoveIds = new Set<string>();
+
+  reset() {
+    this.uploads = 0;
+    this.removed = [];
+    this.removedWith = [];
+    this.files = [];
+    this.uploadAccess = [];
+    this.copies = [];
+    this.failUploadAt = null;
+    this.failCopy = false;
+    this.failRemove = false;
+    this.failRemoveIds = new Set();
+  }
 
   upload(file: Express.Multer.File, folder: string, options?: { access?: 'public' }): Promise<StoredImage>;
   upload(file: Express.Multer.File, folder: string, options: { access: 'authenticated' }): Promise<PrivateStoredImage>;
   async upload(file: Express.Multer.File, folder: string, options: { access?: ImageAccess } = {}): Promise<StoredImage | PrivateStoredImage> {
     const access = options.access ?? 'public';
     this.uploads += 1;
+    if (this.failUploadAt === this.uploads) {
+      throw new HttpError(502, 'UPLOAD_FAILED', 'Image upload failed, please try again later');
+    }
     this.files.push(file);
     this.uploadAccess.push(access);
     if (access === 'authenticated') {
@@ -57,7 +83,15 @@ export class FakeStorage implements ImageStorage {
     return { url: `https://private.test/${publicId}.${format}?expires_at=${Math.floor(expiresAt.getTime() / 1000)}`, expiresAt };
   }
 
+  async copyToPublic(source: CopySource, folder: string): Promise<StoredImage> {
+    if (this.failCopy) throw new HttpError(502, 'UPLOAD_FAILED', 'Image upload failed, please try again later');
+    this.copies.push(source);
+    this.uploads += 1;
+    return { url: `https://cdn.test/${folder}/copy-${this.uploads}.png`, publicId: `${folder}/copy-${this.uploads}` };
+  }
+
   async remove(publicId: string, options: { access?: ImageAccess } = {}) {
+    if (this.failRemove || this.failRemoveIds.has(publicId)) throw new Error('Simulated storage outage');
     this.removed.push(publicId);
     this.removedWith.push({ publicId, access: options.access ?? 'public' });
   }
@@ -81,11 +115,7 @@ export async function resetDatabase() {
     'TRUNCATE TABLE "EventPhotos", "Events", "GalleryItems", "Users", "Packages" RESTART IDENTITY CASCADE',
   );
   mailer.sent = [];
-  storage.uploads = 0;
-  storage.removed = [];
-  storage.removedWith = [];
-  storage.files = [];
-  storage.uploadAccess = [];
+  storage.reset();
   setImageStorage(storage);
 
   await prisma.package.createMany({

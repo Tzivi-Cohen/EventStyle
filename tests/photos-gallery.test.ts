@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { v2 as cloudinary } from 'cloudinary';
 import { CloudinaryStorage, DisabledStorage, setImageStorage } from '../src/services/storage/imageStorage';
+import sharp from 'sharp';
 import { PNG_BUFFER, api, createAdmin, createUser, eventBody, prisma, resetDatabase, storage } from './helpers';
 
 type Auth = { auth: string };
@@ -155,11 +156,12 @@ describe('Event photos', () => {
 
   it('admin uploads several photos; the owner client can see them', async () => {
     const event = await createEvent();
+    const second = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#000000' } }).png().toBuffer();
     const res = await api
       .post(`/api/events/${event.id}/photos`)
       .set('Authorization', admin.auth)
       .attach('photos', PNG_BUFFER, { filename: '1.png', contentType: 'image/png' })
-      .attach('photos', PNG_BUFFER, { filename: '2.png', contentType: 'image/png' });
+      .attach('photos', second, { filename: '2.png', contentType: 'image/png' });
     expect(res.status).toBe(201);
     expect(res.body).toHaveLength(2);
     expect(res.body[0]).toMatchObject({ eventId: event.id, url: expect.stringContaining('https://') });
@@ -182,14 +184,15 @@ describe('Event photos', () => {
     expect(storage.removed).toContain(upload.body[0].publicId);
   });
 
-  it('client cannot upload or delete photos (403)', async () => {
-    const event = await createEvent();
+  it('a client who does not own the event cannot upload or delete photos (403)', async () => {
+    const event = await createEvent('b@test.com');
     await api
       .post(`/api/events/${event.id}/photos`)
       .set('Authorization', client.auth)
       .attach('photos', PNG_BUFFER, { filename: '1.png', contentType: 'image/png' })
       .expect(403);
     await api.delete(`/api/events/${event.id}/photos/1`).set('Authorization', client.auth).expect(403);
+    expect(storage.uploads).toBe(0);
   });
 
   it('upload to a missing event returns 404, and no files returns 400', async () => {

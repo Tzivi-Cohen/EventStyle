@@ -1,5 +1,6 @@
 import { v2 as cloudinary, type ConfigOptions, type UploadApiOptions, type UploadApiResponse } from 'cloudinary';
 import { env } from '../../config/env';
+import { PHOTOS } from '../../config/photos';
 import { HttpError } from '../../errors/HttpError';
 import { MAX_IMAGE_DIMENSION } from './imageProcessing';
 
@@ -34,15 +35,23 @@ export interface PrivateDownloadLink {
   expiresAt: Date;
 }
 
+/**
+ * מקור להעתקה לעותק ציבורי נפרד (פרסום בגלריה):
+ * קובץ פרטי לפי מזהה ופורמט, או קובץ ציבורי קיים לפי הקישור שלו (תמונות ישנות).
+ */
+export type CopySource =
+  | { access: 'authenticated'; publicId: string; format: string }
+  | { access: 'public'; url: string };
+
 export interface RemoveOptions {
   /** ברירת מחדל: public */
   access?: ImageAccess;
 }
 
 /** תוקף ברירת המחדל של קישור הורדה לקובץ פרטי */
-export const PRIVATE_DOWNLOAD_TTL_SECONDS = 10 * 60;
+export const PRIVATE_DOWNLOAD_TTL_SECONDS = PHOTOS.LINK_TTL_SECONDS;
 /** התוקף המרבי שמותר לבקש */
-export const MAX_PRIVATE_DOWNLOAD_TTL_SECONDS = 60 * 60;
+export const MAX_PRIVATE_DOWNLOAD_TTL_SECONDS = PHOTOS.MAX_LINK_TTL_SECONDS;
 const PRIVATE_FORMATS = ['jpg', 'png', 'webp'] as const;
 
 /** ממשק כללי לאחסון תמונות – השרת לא שומר קבצים בדיסק המקומי */
@@ -53,9 +62,18 @@ export interface ImageStorage {
   upload(file: Express.Multer.File, folder: string, options: { access: 'authenticated' }): Promise<PrivateStoredImage>;
   /** קישור הורדה זמני לקובץ פרטי (ברירת מחדל: 10 דקות) */
   getPrivateDownloadUrl(publicId: string, format: string, options?: { expiresInSeconds?: number }): PrivateDownloadLink;
+  /** יצירת עותק ציבורי חדש ונפרד מקובץ קיים. קובץ המקור לא משתנה ולא נחשף */
+  copyToPublic(source: CopySource, folder: string): Promise<StoredImage>;
   /** מחיקה לפי סוג האחסון, כולל ביטול העותקים ב-CDN */
   remove(publicId: string, options?: RemoveOptions): Promise<void>;
 }
+
+/** תוקף הקישור הזמני שהשרת משתמש בו כדי לקרוא קובץ פרטי בזמן ההעתקה */
+const COPY_SOURCE_TTL_SECONDS = 2 * 60;
+/** זמן מרבי לקריאת קובץ המקור בזמן ההעתקה */
+const COPY_SOURCE_TIMEOUT_MS = 20_000;
+/** גודל מרבי של קובץ מקור להעתקה (התמונות השמורות קטנות בהרבה – אחרי עיבוד והקטנה עד 2500px) */
+const MAX_COPY_SOURCE_BYTES = 15 * 1024 * 1024;
 
 /**
  * הגדרות ההעלאה ל-Cloudinary – שכבת הגנה שנייה, אחרי העיבוד בשרת (sanitizeImage).
@@ -150,6 +168,31 @@ export class CloudinaryStorage implements ImageStorage {
     return { url, expiresAt: new Date(expiresAtSeconds * 1000) };
   }
 
+  /**
+   * עותק ציבורי נפרד: השרת קורא את קובץ המקור ומעלה אותו כקובץ חדש (public_id חדש, type "upload"),
+   * עם אותן הגנות של העלאה רגילה (פורמטים מותרים, הגבלת גודל, הסרת מטא-דאטה).
+   * מקור פרטי נקרא דרך קישור חתום קצר-תוקף שנוצר כאן – קובץ המקור נשאר authenticated ולא משתנה.
+   * הקריאה נעשית בשרת ולא ב-Cloudinary: בבדיקה החיה Cloudinary סירב למשוך את קישור ההורדה החתום (HTTP 418).
+   */
+  async copyToPublic(source: CopySource, folder: string): Promise<StoredImage> {
+    const sourceUrl =
+      source.access === 'authenticated'
+        ? this.getPrivateDownloadUrl(source.publicId, source.format, { expiresInSeconds: COPY_SOURCE_TTL_SECONDS }).url
+        : source.url;
+    let buffer: Buffer;
+    try {
+      const response = await fetch(sourceUrl, { signal: AbortSignal.timeout(COPY_SOURCE_TIMEOUT_MS) });
+      if (!response.ok) throw new Error(`source responded with HTTP ${response.status}`);
+      buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length === 0 || buffer.length > MAX_COPY_SOURCE_BYTES) throw new Error(`unexpected source size (${buffer.length} bytes)`);
+    } catch (error) {
+      // ההודעה לא כוללת את הקישור (החתום)
+      console.error('Could not read the source image for the public copy:', (error as Error).message);
+      throw uploadFailed();
+    }
+    return this.upload({ buffer, size: buffer.length, originalname: 'copy', mimetype: 'application/octet-stream' } as Express.Multer.File, folder);
+  }
+
   /** מחיקה לפי סוג האחסון. invalidate: true מבטל גם את העותקים השמורים ב-CDN */
   async remove(publicId: string, options: RemoveOptions = {}): Promise<void> {
     await cloudinary.uploader.destroy(publicId, {
@@ -171,6 +214,9 @@ export class DisabledStorage implements ImageStorage {
     throw storageNotConfigured();
   }
   getPrivateDownloadUrl(): PrivateDownloadLink {
+    throw storageNotConfigured();
+  }
+  async copyToPublic(): Promise<StoredImage> {
     throw storageNotConfigured();
   }
   async remove(): Promise<void> {

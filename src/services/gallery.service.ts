@@ -6,6 +6,7 @@ import { toAdminGalleryDto, toGalleryDto } from '../utils/mappers';
 import { toPage, toSkipTake } from '../utils/pagination';
 import type { AdminGalleryQuery, GalleryBodyInput, GalleryQuery, GalleryUpdateInput } from '../schemas/gallery.schema';
 import { getImageStorage, removeImagesSafely } from './storage/imageStorage';
+import { removeGalleryCopies, storageDeleteFailed } from './photos.service';
 
 /**
  * סדר הגלריה: sortOrder, ואז החדשים קודם (id לסדר יציב בין עמודים).
@@ -87,26 +88,54 @@ export async function addGalleryItem(file: Express.Multer.File, data: GalleryBod
   }
 }
 
-/** עריכת פרטי פריט (כותרת, סוג, פרסום, מובילה, סדר). שדה שלא נשלח לא משתנה, והקובץ לא משתנה */
+/**
+ * עריכת פרטי פריט (כותרת, סוג, פרסום, מובילה, סדר). שדה שלא נשלח לא משתנה, והקובץ לא משתנה.
+ * עותק של תמונת לקוחה (sourceEventPhotoId) יכול לחזור לפרסום רק אם ההסכמה עדיין בתוקף.
+ * שורת תמונת המקור ננעלת (FOR SHARE), כך שביטול הסכמה מקביל ממתין ומסתיר את הפריט אחרי העדכון.
+ */
 export async function updateGalleryItem(id: number, input: GalleryUpdateInput) {
-  const { count } = await prisma.galleryItem.updateMany({
-    where: { id },
-    data: {
-      ...(input.title !== undefined && { title: input.title }),
-      ...(input.category !== undefined && { category: input.category }),
-      ...(input.isPublished !== undefined && { isPublished: input.isPublished }),
-      ...(input.isFeatured !== undefined && { isFeatured: input.isFeatured }),
-      ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
-    },
+  const item = await prisma.$transaction(async (tx) => {
+    if (input.isPublished === true) {
+      const current = await tx.galleryItem.findUnique({ where: { id }, select: { sourceEventPhotoId: true } });
+      if (current?.sourceEventPhotoId) {
+        const [source] = await tx.$queryRaw<{ publishConsent: boolean }[]>`
+          SELECT "publishConsent" FROM "EventPhotos" WHERE id = ${current.sourceEventPhotoId} FOR SHARE`;
+        if (!source?.publishConsent) {
+          throw new HttpError(409, 'PUBLISH_CONSENT_REQUIRED', 'The event owner has not given consent to publish this photo');
+        }
+      }
+    }
+    const { count } = await tx.galleryItem.updateMany({
+      where: { id },
+      data: {
+        ...(input.title !== undefined && { title: input.title }),
+        ...(input.category !== undefined && { category: input.category }),
+        ...(input.isPublished !== undefined && { isPublished: input.isPublished }),
+        ...(input.isFeatured !== undefined && { isFeatured: input.isFeatured }),
+        ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
+      },
+    });
+    if (count === 0) throw HttpError.notFound('Gallery item not found');
+    return tx.galleryItem.findUniqueOrThrow({ where: { id } });
   });
-  if (count === 0) throw HttpError.notFound('Gallery item not found');
-  return toAdminGalleryDto(await prisma.galleryItem.findUniqueOrThrow({ where: { id } }));
+  return toAdminGalleryDto(item);
 }
 
-/** מחיקה לצמיתות – כולל הקובץ ב-Cloudinary. להסתרה בלי מחיקה: PATCH עם isPublished=false */
+/**
+ * מחיקה לצמיתות – כולל הקובץ ב-Cloudinary. להסתרה בלי מחיקה: PATCH עם isPublished=false.
+ * פריט רגיל: ההתנהגות הקיימת (מחיקת הרשומה, ומחיקה מהאחסון במאמץ הטוב ביותר).
+ * עותק של תמונת אירוע: מוסתר מיד, נמחק מהאחסון, ורק אז הרשומה נמחקת. כשל באחסון → 502 STORAGE_DELETE_FAILED,
+ * והפריט נשאר מוסתר (לא עותק ציבורי פעיל בלי רשומה). תמונת המקור וההסכמה לא משתנות.
+ */
 export async function deleteGalleryItem(id: number) {
   const item = await prisma.galleryItem.findUnique({ where: { id } });
   if (!item) throw HttpError.notFound('Gallery item not found');
-  await prisma.galleryItem.delete({ where: { id } });
-  await removeImagesSafely([item.publicId]);
+  if (item.sourceEventPhotoId === null) {
+    await prisma.galleryItem.delete({ where: { id } });
+    await removeImagesSafely([item.publicId]);
+    return;
+  }
+  await prisma.galleryItem.updateMany({ where: { id }, data: { isPublished: false } });
+  const failed = await removeGalleryCopies([item]);
+  if (failed.length > 0) throw storageDeleteFailed(failed);
 }

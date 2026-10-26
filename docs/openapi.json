@@ -34,7 +34,7 @@
     },
     {
       "name": "Event Photos",
-      "description": "תמונות אירוע"
+      "description": "תמונות אירוע פרטיות: מנהלת או בעלת האירוע. תמונות חדשות נשמרות כקבצים פרטיים (authenticated) ונצפות רק דרך קישור חתום וזמני (10 דקות) שנוצר אחרי בדיקת ההרשאות. הסכמה לפרסום ופרסום בגלריה."
     },
     {
       "name": "System",
@@ -79,6 +79,12 @@
                   "UNSUPPORTED_FILE_TYPE",
                   "STORAGE_NOT_CONFIGURED",
                   "UPLOAD_FAILED",
+                  "STORAGE_DELETE_FAILED",
+                  "PHOTO_LIMIT_REACHED",
+                  "DUPLICATE_PHOTO",
+                  "PUBLISH_CONSENT_REQUIRED",
+                  "ALREADY_PUBLISHED",
+                  "PHOTO_IN_GALLERY",
                   "GOOGLE_AUTH_FAILED",
                   "GOOGLE_AUTH_NOT_CONFIGURED",
                   "GOOGLE_UNAVAILABLE",
@@ -638,12 +644,18 @@
             "type": "object",
             "required": [
               "isPublished",
+              "sourceEventPhotoId",
               "updatedAt"
             ],
             "properties": {
               "isPublished": {
                 "type": "boolean",
                 "description": "false = hidden from every public endpoint (the file stays in storage)"
+              },
+              "sourceEventPhotoId": {
+                "type": "integer",
+                "nullable": true,
+                "description": "The event photo this public copy was made from (admin only). null for items uploaded directly to the gallery"
               },
               "updatedAt": {
                 "type": "string",
@@ -662,6 +674,7 @@
           "sortOrder": 0,
           "createdAt": "2026-10-05T10:00:00.000Z",
           "isPublished": true,
+          "sourceEventPhotoId": null,
           "updatedAt": "2026-10-27T12:00:00.000Z"
         }
       },
@@ -740,11 +753,17 @@
       },
       "EventPhoto": {
         "type": "object",
+        "description": "תמונת אירוע. ללקוחה לא נשלחים publicId, סוג האחסון או קישור קבוע לתמונה פרטית. המנהלת מקבלת גם את השדות של AdminEventPhoto.",
         "required": [
           "id",
           "eventId",
           "url",
-          "publicId",
+          "urlExpiresAt",
+          "isPrivate",
+          "publishConsent",
+          "publishedInGallery",
+          "uploadedByMe",
+          "canDelete",
           "createdAt"
         ],
         "properties": {
@@ -755,11 +774,34 @@
             "type": "integer"
           },
           "url": {
-            "type": "string"
-          },
-          "publicId": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Private photo: a signed temporary link, valid for 10 minutes (see urlExpiresAt). Legacy public photo: its permanent URL. null if a link cannot be created right now (e.g. storage not configured). Do not store this link – request the photo again for a fresh one."
+          },
+          "urlExpiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the link stops working. null for legacy public photos"
+          },
+          "isPrivate": {
+            "type": "boolean",
+            "description": "true = private file (all new uploads); false = legacy public photo"
+          },
+          "publishConsent": {
+            "type": "boolean",
+            "description": "The event owner agreed that this photo may be published in the gallery (default false)"
+          },
+          "publishedInGallery": {
+            "type": "boolean",
+            "description": "A public copy of this photo is currently published in the gallery"
+          },
+          "uploadedByMe": {
+            "type": "boolean"
+          },
+          "canDelete": {
+            "type": "boolean",
+            "description": "Admin: always. Client: only photos she uploaded"
           },
           "createdAt": {
             "type": "string",
@@ -769,9 +811,181 @@
         "example": {
           "id": 7,
           "eventId": 1,
-          "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
-          "publicId": "eventstyle/events/1/abc",
+          "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+          "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+          "isPrivate": true,
+          "publishConsent": false,
+          "publishedInGallery": false,
+          "uploadedByMe": true,
+          "canDelete": true,
           "createdAt": "2026-10-20T12:00:00.000Z"
+        }
+      },
+      "AdminEventPhoto": {
+        "description": "תמונת אירוע בתשובה למנהלת – כולל פרטי אחסון וקישור לעותק בגלריה",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventPhoto"
+          },
+          {
+            "type": "object",
+            "required": [
+              "publicId",
+              "storageType",
+              "uploadedById",
+              "galleryItemId"
+            ],
+            "properties": {
+              "publicId": {
+                "type": "string",
+                "nullable": true
+              },
+              "storageType": {
+                "type": "string",
+                "enum": [
+                  "public",
+                  "authenticated"
+                ]
+              },
+              "uploadedById": {
+                "type": "integer",
+                "nullable": true,
+                "description": "null for legacy photos or a deleted user"
+              },
+              "galleryItemId": {
+                "type": "integer",
+                "nullable": true,
+                "description": "The gallery copy made from this photo (published or hidden)"
+              }
+            }
+          }
+        ],
+        "example": {
+          "id": 7,
+          "eventId": 1,
+          "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+          "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+          "isPrivate": true,
+          "publishConsent": false,
+          "publishedInGallery": false,
+          "uploadedByMe": false,
+          "canDelete": true,
+          "createdAt": "2026-10-20T12:00:00.000Z",
+          "publicId": "eventstyle/events/1/abc",
+          "storageType": "authenticated",
+          "uploadedById": 2,
+          "galleryItemId": null
+        }
+      },
+      "AdminEventPhotoListItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AdminEventPhoto"
+          },
+          {
+            "type": "object",
+            "required": [
+              "event"
+            ],
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "eventName": {
+                    "type": "string"
+                  },
+                  "eventType": {
+                    "$ref": "#/components/schemas/EventType"
+                  },
+                  "clientName": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "example": {
+          "id": 7,
+          "eventId": 1,
+          "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+          "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+          "isPrivate": true,
+          "publishConsent": true,
+          "publishedInGallery": false,
+          "uploadedByMe": false,
+          "canDelete": true,
+          "createdAt": "2026-10-20T12:00:00.000Z",
+          "publicId": "eventstyle/events/1/abc",
+          "storageType": "authenticated",
+          "uploadedById": 2,
+          "galleryItemId": null,
+          "event": {
+            "id": 1,
+            "eventName": "יום הולדת 30 לנועה",
+            "eventType": "Birthday",
+            "clientName": "נועה לוי"
+          }
+        }
+      },
+      "ConsentInput": {
+        "type": "object",
+        "required": [
+          "publishConsent"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "publishConsent": {
+            "type": "boolean",
+            "description": "true = give consent, false = revoke (removes the gallery copy)"
+          }
+        },
+        "example": {
+          "publishConsent": true
+        }
+      },
+      "PublishInput": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false,
+        "description": "שדות לא מוכרים (למשל url) נדחים.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "category": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EventType"
+              }
+            ],
+            "description": "Default: the event type"
+          },
+          "isPublished": {
+            "type": "boolean",
+            "description": "Default true. false = create the copy hidden (draft)"
+          },
+          "isFeatured": {
+            "type": "boolean",
+            "description": "Default false"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "Default 0"
+          }
+        },
+        "example": {
+          "title": "שולחן מתוקים ורוד",
+          "isFeatured": false
         }
       },
       "Event": {
@@ -871,7 +1085,7 @@
             "items": {
               "$ref": "#/components/schemas/EventPhoto"
             },
-            "description": "In single event responses"
+            "description": "In single event responses, oldest first, with fresh view links. Admin responses use AdminEventPhoto"
           },
           "createdAt": {
             "type": "string",
@@ -2545,6 +2759,7 @@
                   "sortOrder": 0,
                   "createdAt": "2026-10-05T10:00:00.000Z",
                   "isPublished": true,
+                  "sourceEventPhotoId": null,
                   "updatedAt": "2026-10-27T12:00:00.000Z"
                 }
               }
@@ -2722,7 +2937,7 @@
           "Gallery"
         ],
         "summary": "עריכת פריט גלריה: כותרת, סוג, פרסום / הסתרה, מובילה, סדר (Admin)",
-        "description": "שדה שלא נשלח לא משתנה. הסתרה (isPublished=false) לא מוחקת את הקובץ.",
+        "description": "שדה שלא נשלח לא משתנה. הסתרה (isPublished=false) לא מוחקת את הקובץ. עותק של תמונת אירוע (sourceEventPhotoId) יכול לחזור לפרסום רק אם ההסכמה בתוקף – אחרת 409 PUBLISH_CONSENT_REQUIRED.",
         "security": [
           {
             "bearerAuth": []
@@ -2769,6 +2984,7 @@
                   "sortOrder": 0,
                   "createdAt": "2026-10-05T10:00:00.000Z",
                   "isPublished": true,
+                  "sourceEventPhotoId": null,
                   "updatedAt": "2026-10-27T12:00:00.000Z"
                 }
               }
@@ -2843,6 +3059,22 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "The event owner has not given (or revoked) the publish consent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "PUBLISH_CONSENT_REQUIRED",
+                    "message": "The event owner has not given consent to publish this photo"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -2851,7 +3083,7 @@
           "Gallery"
         ],
         "summary": "מחיקת תמונה מהגלריה לצמיתות, כולל הקובץ באחסון (Admin)",
-        "description": "להסתרה בלי מחיקה: PATCH עם isPublished=false.",
+        "description": "להסתרה בלי מחיקה: PATCH עם isPublished=false. בעותק של תמונת אירוע: נמחק רק העותק הציבורי; תמונת המקור וההסכמה לא משתנות (אפשר לפרסם שוב). העותק מוסתר קודם ונמחק מהאחסון לפני הרשומה; אם המחיקה באחסון נכשלת – 502 STORAGE_DELETE_FAILED והפריט נשאר מוסתר.",
         "security": [
           {
             "bearerAuth": []
@@ -2939,6 +3171,27 @@
                   "error": {
                     "code": "NOT_FOUND",
                     "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A public gallery copy could not be removed from storage. It is hidden, nothing else was deleted – retry the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "STORAGE_DELETE_FAILED",
+                    "message": "The public gallery copy could not be removed from storage. It is hidden; please try again",
+                    "details": {
+                      "galleryItemIds": [
+                        12
+                      ]
+                    }
                   }
                 }
               }
@@ -3050,6 +3303,7 @@
                       "sortOrder": 0,
                       "createdAt": "2026-10-05T10:00:00.000Z",
                       "isPublished": true,
+                      "sourceEventPhotoId": null,
                       "updatedAt": "2026-10-27T12:00:00.000Z"
                     }
                   ],
@@ -3634,8 +3888,13 @@
                     {
                       "id": 7,
                       "eventId": 1,
-                      "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
-                      "publicId": "eventstyle/events/1/abc",
+                      "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                      "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                      "isPrivate": true,
+                      "publishConsent": false,
+                      "publishedInGallery": false,
+                      "uploadedByMe": true,
+                      "canDelete": true,
                       "createdAt": "2026-10-20T12:00:00.000Z"
                     }
                   ],
@@ -3684,7 +3943,7 @@
             }
           },
           "403": {
-            "description": "Event belongs to another client",
+            "description": "Event belongs to another client, or has no owner (clients only)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3783,9 +4042,18 @@
                     {
                       "id": 7,
                       "eventId": 1,
-                      "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
+                      "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                      "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                      "isPrivate": true,
+                      "publishConsent": false,
+                      "publishedInGallery": false,
+                      "uploadedByMe": false,
+                      "canDelete": true,
+                      "createdAt": "2026-10-20T12:00:00.000Z",
                       "publicId": "eventstyle/events/1/abc",
-                      "createdAt": "2026-10-20T12:00:00.000Z"
+                      "storageType": "authenticated",
+                      "uploadedById": 2,
+                      "galleryItemId": null
                     }
                   ],
                   "createdAt": "2026-10-01T09:00:00.000Z",
@@ -3871,6 +4139,7 @@
           "Events"
         ],
         "summary": "מחיקת אירוע וכל התמונות שלו (Admin)",
+        "description": "כל התמונות של האירוע נמחקות, וגם **כל העותקים הציבוריים שנוצרו מהן בגלריה**:\n\n1. ההסכמות מבוטלות והעותקים מוסתרים מיד.\n2. העותקים נמחקים מהאחסון (invalidate: true) ומהגלריה.\n3. רק אז האירוע נמחק, והקבצים הפרטיים נמחקים מהאחסון.\n\nאם מחיקת עותק באחסון נכשלת – 502 STORAGE_DELETE_FAILED והאירוע **לא** נמחק; העותקים שנכשלו נשארים מוסתרים ולא ניתנים לפרסום מחדש. שליחה חוזרת של הבקשה ממשיכה. פריטי גלריה שאינם מקושרים לאירוע לא משתנים.",
         "security": [
           {
             "bearerAuth": []
@@ -3962,6 +4231,48 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "A gallery copy was created while deleting (rare race) – nothing was deleted, retry the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "PHOTO_IN_GALLERY",
+                    "message": "A gallery copy was created while deleting. Please try again",
+                    "details": {
+                      "galleryItemIds": [
+                        12
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A public gallery copy could not be removed from storage. It is hidden, nothing else was deleted – retry the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "STORAGE_DELETE_FAILED",
+                    "message": "The public gallery copy could not be removed from storage. It is hidden; please try again",
+                    "details": {
+                      "galleryItemIds": [
+                        12
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -4032,9 +4343,18 @@
                     {
                       "id": 7,
                       "eventId": 1,
-                      "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
+                      "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                      "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                      "isPrivate": true,
+                      "publishConsent": false,
+                      "publishedInGallery": false,
+                      "uploadedByMe": false,
+                      "canDelete": true,
+                      "createdAt": "2026-10-20T12:00:00.000Z",
                       "publicId": "eventstyle/events/1/abc",
-                      "createdAt": "2026-10-20T12:00:00.000Z"
+                      "storageType": "authenticated",
+                      "uploadedById": 2,
+                      "galleryItemId": null
                     }
                   ],
                   "createdAt": "2026-10-01T09:00:00.000Z",
@@ -4117,12 +4437,12 @@
       }
     },
     "/api/events/{id}/photos": {
-      "post": {
+      "get": {
         "tags": [
           "Event Photos"
         ],
-        "summary": "העלאת תמונות לאירוע (Admin)",
-        "description": "multipart/form-data. 1–10 קבצים בשדה photos. סוגים: image/jpeg, image/png, image/webp. עד 5MB לקובץ.\n\nכל תמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד 2500px והסרת כל המטא-דאטה (כולל GPS).",
+        "summary": "כל התמונות של אירוע, עם קישורי צפייה זמניים (Admin או בעלת האירוע)",
+        "description": "ממוינות מהישנה לחדשה. לכל תמונה פרטית נוצר קישור חתום חדש, תקף 10 דקות (urlExpiresAt). אירוע בלי בעלים – למנהלת בלבד. אם אי אפשר ליצור קישור כרגע, התמונה מוחזרת עם url=null.",
         "security": [
           {
             "bearerAuth": []
@@ -4141,31 +4461,9 @@
             "example": 1
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "photos"
-                ],
-                "properties": {
-                  "photos": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "format": "binary"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
-          "201": {
-            "description": "Created photos",
+          "200": {
+            "description": "Photos (admin: AdminEventPhoto)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4178,8 +4476,13 @@
                   {
                     "id": 7,
                     "eventId": 1,
-                    "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
-                    "publicId": "eventstyle/events/1/abc",
+                    "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                    "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                    "isPrivate": true,
+                    "publishConsent": false,
+                    "publishedInGallery": false,
+                    "uploadedByMe": true,
+                    "canDelete": true,
                     "createdAt": "2026-10-20T12:00:00.000Z"
                   }
                 ]
@@ -4225,7 +4528,7 @@
             }
           },
           "403": {
-            "description": "Logged in but not allowed – אין הרשאה",
+            "description": "Event belongs to another client, or has no owner (clients only)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4234,7 +4537,7 @@
                 "example": {
                   "error": {
                     "code": "FORBIDDEN",
-                    "message": "You do not have permission to perform this action"
+                    "message": "You do not have access to this event"
                   }
                 }
               }
@@ -4251,6 +4554,175 @@
                   "error": {
                     "code": "NOT_FOUND",
                     "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Event Photos"
+        ],
+        "summary": "העלאת תמונות פרטיות לאירוע (Admin או בעלת האירוע)",
+        "description": "multipart/form-data. 1–10 קבצים בשדה photos. סוגים: image/jpeg, image/png, image/webp. עד 5MB לקובץ. עד 50 תמונות לאירוע.\n\nההרשאה והמגבלה נבדקות **לפני** קבלת הקבצים. סוג הקובץ נבדק לפי התוכן האמיתי (חתימת הקובץ ופענוח התמונה). כל תמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד 2500px והסרת כל המטא-דאטה (כולל GPS).\n\n**כל התמונות החדשות נשמרות כקבצים פרטיים** (Cloudinary authenticated). התשובה כוללת קישור צפייה זמני בלבד.\n\n**כפילויות:** SHA-256 של הקובץ המעובד. אותה תמונה פעמיים באותה בקשה, או תמונה שכבר קיימת באירוע → 409 DUPLICATE_PHOTO (גם בבקשות מקבילות). הבקשה כולה נדחית – אף קובץ לא נשמר.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "photos"
+                ],
+                "properties": {
+                  "photos": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created photos (only the new ones)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventPhoto"
+                  }
+                },
+                "example": [
+                  {
+                    "id": 7,
+                    "eventId": 1,
+                    "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                    "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                    "isPrivate": true,
+                    "publishConsent": false,
+                    "publishedInGallery": false,
+                    "uploadedByMe": true,
+                    "canDelete": true,
+                    "createdAt": "2026-10-20T12:00:00.000Z"
+                  }
+                ]
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Event belongs to another client, or has no owner (clients only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have access to this event"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate photo (DUPLICATE_PHOTO) or the event would exceed the photo limit (PHOTO_LIMIT_REACHED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "PHOTO_LIMIT_REACHED",
+                    "message": "An event can have at most 50 photos (currently 49)",
+                    "details": {
+                      "limit": 50,
+                      "current": 49,
+                      "requested": 2
+                    }
                   }
                 }
               }
@@ -4324,11 +4796,158 @@
       }
     },
     "/api/events/{id}/photos/{photoId}": {
+      "get": {
+        "tags": [
+          "Event Photos"
+        ],
+        "summary": "תמונה אחת עם קישור צפייה זמני חדש – לרענון קישור שפג (Admin או בעלת האירוע)",
+        "description": "הקישור תקף 10 דקות. אחרי שפג – מבקשים שוב את התמונה. כאן כשל ביצירת הקישור מוחזר כשגיאה (503).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "photoId",
+            "in": "path",
+            "required": true,
+            "description": "Photo id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Photo (admin: AdminEventPhoto)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPhoto"
+                },
+                "example": {
+                  "id": 7,
+                  "eventId": 1,
+                  "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                  "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                  "isPrivate": true,
+                  "publishConsent": false,
+                  "publishedInGallery": false,
+                  "uploadedByMe": true,
+                  "canDelete": true,
+                  "createdAt": "2026-10-20T12:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Event belongs to another client, or has no owner (clients only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have access to this event"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event or photo not found (or the photo belongs to another event)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Photo not found for this event"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Image storage (Cloudinary) is not configured on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "STORAGE_NOT_CONFIGURED",
+                    "message": "Image storage is not configured on the server (set CLOUDINARY_* environment variables)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Event Photos"
         ],
-        "summary": "מחיקת תמונת אירוע (Admin)",
+        "summary": "מחיקת תמונת אירוע (Admin – כל תמונה; בעלת האירוע – רק תמונות שהעלתה)",
+        "description": "הקובץ נמחק גם מהאחסון (כולל ביטול העותקים ב-CDN).\n\n**תמונה שפורסמה בגלריה:** העותק הציבורי מוסר **לפני** תמונת המקור – ההסכמה מבוטלת והעותק מוסתר מיד, נמחק מהאחסון (invalidate: true) ומהגלריה, ורק אז התמונה נמחקת. אם מחיקת העותק באחסון נכשלת – 502 STORAGE_DELETE_FAILED, והתמונה לא נמחקת; העותק נשאר מוסתר ולא ניתן לפרסום מחדש, ושליחה חוזרת של הבקשה ממשיכה.",
         "security": [
           {
             "bearerAuth": []
@@ -4401,6 +5020,333 @@
             }
           },
           "403": {
+            "description": "Another client event, or a photo the client did not upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You can delete only photos you uploaded"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event or photo not found (or the photo belongs to another event)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Photo not found for this event"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A gallery copy was created while deleting (rare race) – nothing was deleted, retry the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "PHOTO_IN_GALLERY",
+                    "message": "A gallery copy was created while deleting. Please try again",
+                    "details": {
+                      "galleryItemIds": [
+                        12
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A public gallery copy could not be removed from storage. It is hidden, nothing else was deleted – retry the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "STORAGE_DELETE_FAILED",
+                    "message": "The public gallery copy could not be removed from storage. It is hidden; please try again",
+                    "details": {
+                      "galleryItemIds": [
+                        12
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/photos/{photoId}/consent": {
+      "put": {
+        "tags": [
+          "Event Photos"
+        ],
+        "summary": "הסכמה / ביטול הסכמה לפרסום תמונה בגלריה (בעלת האירוע בלבד)",
+        "description": "ברירת המחדל: אין הסכמה, ותמונות לעולם לא מתפרסמות אוטומטית. הסכמה רק **מאפשרת** למנהלת לפרסם.\n\n**ביטול הסכמה** (publishConsent=false): אם יש עותק בגלריה – הוא מוסתר מיד, ואז נמחק מהאחסון (כולל CDN invalidation) ומהגלריה. אם המחיקה באחסון נכשלת, העותק נשאר מוסתר ולא יכול לחזור לפרסום; שליחה חוזרת של הביטול מנסה שוב. גם המנהלת לא יכולה לשנות הסכמה (403).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "photoId",
+            "in": "path",
+            "required": true,
+            "description": "Photo id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated photo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPhoto"
+                },
+                "example": {
+                  "id": 7,
+                  "eventId": 1,
+                  "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                  "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                  "isPrivate": true,
+                  "publishConsent": true,
+                  "publishedInGallery": false,
+                  "uploadedByMe": true,
+                  "canDelete": true,
+                  "createdAt": "2026-10-20T12:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the event owner (including the admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "Only the event owner can change the publish consent"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event or photo not found (or the photo belongs to another event)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Photo not found for this event"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/photos/{photoId}/publish": {
+      "post": {
+        "tags": [
+          "Event Photos"
+        ],
+        "summary": "פרסום תמונת אירוע בגלריה הציבורית כעותק נפרד (Admin)",
+        "description": "מחייב הסכמה בתוקף של בעלת האירוע. נוצר **עותק ציבורי חדש ונפרד** באחסון – קובץ המקור נשאר פרטי ולא נחשף – ופריט גלריה שמקושר לתמונה (sourceEventPhotoId). פרסום כפול נחסם גם בבקשות מקבילות. אם השמירה נכשלת אחרי ההעתקה – העותק נמחק.\n\nהסתרה / עריכה: PATCH /api/gallery/{id}. הסרה: DELETE /api/gallery/{id}.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "photoId",
+            "in": "path",
+            "required": true,
+            "description": "Photo id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Gallery item (the public copy)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminGalleryItem"
+                },
+                "example": {
+                  "id": 12,
+                  "title": "שולחן מתוקים ורוד",
+                  "category": "Birthday",
+                  "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/gallery/xyz.jpg",
+                  "publicId": "eventstyle/gallery/xyz",
+                  "isFeatured": false,
+                  "sortOrder": 0,
+                  "createdAt": "2026-10-27T13:00:00.000Z",
+                  "isPublished": true,
+                  "sourceEventPhotoId": 7,
+                  "updatedAt": "2026-10-27T13:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
             "description": "Logged in but not allowed – אין הרשאה",
             "content": {
               "application/json": {
@@ -4417,7 +5363,7 @@
             }
           },
           "404": {
-            "description": "Not found – לא נמצא",
+            "description": "Event or photo not found (or the photo belongs to another event)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4426,7 +5372,244 @@
                 "example": {
                   "error": {
                     "code": "NOT_FOUND",
-                    "message": "Event not found"
+                    "message": "Photo not found for this event"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No consent (PUBLISH_CONSENT_REQUIRED) or already in the gallery (ALREADY_PUBLISHED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "ALREADY_PUBLISHED",
+                    "message": "This photo already has a copy in the gallery",
+                    "details": {
+                      "galleryItemId": 12
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Image storage (Cloudinary) rejected the upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UPLOAD_FAILED",
+                    "message": "Image upload failed, please try again later"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Image storage (Cloudinary) is not configured on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "STORAGE_NOT_CONFIGURED",
+                    "message": "Image storage is not configured on the server (set CLOUDINARY_* environment variables)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/event-photos": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "תמונות אירוע לניהול – למשל תמונות שקיבלו הסכמה וממתינות לפרסום (Admin)",
+        "description": "לדוגמה: publishConsent=true&inGallery=false. ממוין מהחדשה לישנה, עם קישורי צפייה זמניים.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "publishConsent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "inGallery",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "true = has a gallery copy (published or hidden)"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number (starts at 1)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            },
+            "description": "Items per page (max 100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event photos, paginated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "pagination"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AdminEventPhotoListItem"
+                      }
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/Pagination"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": 7,
+                      "eventId": 1,
+                      "url": "https://api.cloudinary.com/v1_1/demo/image/download?api_key=123456789012345&expires_at=1792502400&format=jpg&public_id=eventstyle%2Fevents%2F1%2Fabc&signature=0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c&timestamp=1792501800&type=authenticated",
+                      "urlExpiresAt": "2026-10-20T12:10:00.000Z",
+                      "isPrivate": true,
+                      "publishConsent": true,
+                      "publishedInGallery": false,
+                      "uploadedByMe": false,
+                      "canDelete": true,
+                      "createdAt": "2026-10-20T12:00:00.000Z",
+                      "publicId": "eventstyle/events/1/abc",
+                      "storageType": "authenticated",
+                      "uploadedById": 2,
+                      "galleryItemId": null,
+                      "event": {
+                        "id": 1,
+                        "eventName": "יום הולדת 30 לנועה",
+                        "eventType": "Birthday",
+                        "clientName": "נועה לוי"
+                      }
+                    }
+                  ],
+                  "pagination": {
+                    "page": 1,
+                    "limit": 10,
+                    "totalItems": 1,
+                    "totalPages": 1
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
                   }
                 }
               }

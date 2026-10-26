@@ -5,7 +5,6 @@ import {
   eventBodySchema,
   eventListQuerySchema,
   eventStatusBodySchema,
-  photoParamsSchema,
 } from '../schemas/event.schema';
 
 export async function listEvents(req: Request, res: Response) {
@@ -25,35 +24,23 @@ export async function getEvent(req: Request, res: Response) {
 
 export async function createEvent(req: Request, res: Response) {
   const input = eventBodySchema.parse(req.body);
-  res.status(201).json(await eventsService.createEvent(input));
+  res.status(201).json(await eventsService.createEvent(input, req.user!));
 }
 
 export async function updateEvent(req: Request, res: Response) {
   const { id } = idParamSchema.parse(req.params);
   const input = eventBodySchema.parse(req.body);
-  res.json(await eventsService.updateEvent(id, input));
+  res.json(await eventsService.updateEvent(id, input, req.user!));
 }
 
 export async function updateEventStatus(req: Request, res: Response) {
   const { id } = idParamSchema.parse(req.params);
   const { status } = eventStatusBodySchema.parse(req.body);
-  res.json(await eventsService.updateEventStatus(id, status));
+  res.json(await eventsService.updateEventStatus(id, status, req.user!));
 }
 
 export async function deleteEvent(req: Request, res: Response) {
   const { id } = idParamSchema.parse(req.params);
   await eventsService.deleteEvent(id);
-  res.status(204).send();
-}
-
-export async function addEventPhotos(req: Request, res: Response) {
-  const { id } = idParamSchema.parse(req.params);
-  const files = req.files as Express.Multer.File[];
-  res.status(201).json(await eventsService.addEventPhotos(id, files));
-}
-
-export async function deleteEventPhoto(req: Request, res: Response) {
-  const { id, photoId } = photoParamsSchema.parse(req.params);
-  await eventsService.deleteEventPhoto(id, photoId);
   res.status(204).send();
 }
