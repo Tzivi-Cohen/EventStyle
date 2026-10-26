@@ -1,31 +1,22 @@
 /**
- * EventStyle – נתוני הדגמה (Seed)
+ * EventStyle – נתוני התחלה ונתוני הדגמה (Seed)
  *
- * - בטוח להרצה חוזרת: יוצר רק מה שחסר ולא דורס נתונים קיימים.
+ * - בטוח להרצה חוזרת: יוצר רק מה שחסר ולא דורס או משנה נתונים קיימים.
  * - חשבון Admin נוצר רק כאן (אי אפשר להירשם כ-Admin דרך ה-API).
- * - ב-Production חובה להגדיר SEED_ADMIN_PASSWORD; אין סיסמאות ידועות מראש.
+ * - ב-Production (NODE_ENV=production) נוצרים רק נתוני התחלה הכרחיים:
+ *   שלוש החבילות הכלליות (רק כשטבלת החבילות ריקה) וחשבון המנהלת (רק עם SEED_ADMIN_PASSWORD).
+ *   לקוחות, אירועים, פריטי גלריה וחבילות לפי סוג אירוע הם נתוני הדגמה – והם לעולם לא נוצרים ב-Production.
  * - כל השמות והפרטים מומצאים.
  */
 import 'dotenv/config';
 import { PrismaClient, type EventStatus, type EventType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
-const prisma = new PrismaClient();
-const isProduction = process.env.NODE_ENV === 'production';
-
 const DEV_ADMIN_PASSWORD = 'Admin12345';
 const DEV_CLIENT_PASSWORD = 'Client12345';
 
-function resolvePassword(envName: string, devDefault: string): string | null {
-  const value = process.env[envName]?.trim();
-  if (value) {
-    if (value.length < 8) throw new Error(`${envName} must be at least 8 characters`);
-    return value;
-  }
-  return isProduction ? null : devDefault;
-}
-
-const PACKAGES = [
+/** שלוש החבילות הכלליות (eventType = null) – המחירון הבסיסי של האתר. המחירים הם ערכי הדגמה */
+const BASE_PACKAGES = [
   {
     name: 'Basic',
     description: 'עיצוב שולחן מרכזי, צבעים ואביזרים בסיסיים',
@@ -49,6 +40,27 @@ const PACKAGES = [
   },
 ];
 
+/** חבילות הדגמה לפי סוג אירוע – לסביבת פיתוח בלבד */
+export const DEMO_TYPE_PACKAGES: {
+  eventType: EventType;
+  name: string;
+  description: string;
+  price: number;
+  features: string[];
+  sortOrder: number;
+}[] = [
+  { eventType: 'Birthday', name: 'יום הולדת קלאסי', description: 'שולחן מתוקים ובלונים בצבעי האירוע', price: 1500, features: ['שולחן מתוקים מעוצב', 'קשת בלונים קטנה', 'שלט ברכה אישי'], sortOrder: 1 },
+  { eventType: 'Birthday', name: 'יום הולדת חגיגי', description: 'עיצוב מלא כולל רקע צילום וקשת בלונים גדולה', price: 3200, features: ['שולחן מתוקים', 'קשת בלונים גדולה', 'רקע צילום', 'עיצוב שולחנות אורחים'], sortOrder: 2 },
+  { eventType: 'BatMitzvah', name: 'בת מצווה אלגנטית', description: 'עיצוב בגווני זהב ולבן עם פינת צילום', price: 4200, features: ['פינת צילום', 'קיר בלונים', 'מרכזי שולחן'], sortOrder: 1 },
+  { eventType: 'BatMitzvah', name: 'בת מצווה קונספט', description: 'קונספט מלא לפי בחירת בת המצווה', price: 7800, features: ['קונספט אישי', 'סידורי פרחים', 'רקע מעוצב', 'ליווי ביום האירוע'], sortOrder: 2 },
+  { eventType: 'Brit', name: 'ברית עדינה', description: 'עיצוב עדין בגווני תכלת או ורוד', price: 1300, features: ['שולחן כיבוד מעוצב', 'בלונים בגוונים עדינים'], sortOrder: 1 },
+  { eventType: 'Brit', name: 'ברית מורחבת', description: 'עיצוב אולם קטן כולל פינת צילום משפחתית', price: 2600, features: ['שולחן כיבוד', 'פינת צילום', 'מרכזי שולחן'], sortOrder: 2 },
+  { eventType: 'Corporate', name: 'כנס חברה', description: 'עיצוב מינימליסטי בצבעי המותג', price: 5000, features: ['עמדת קבלת פנים', 'מרכזי שולחן', 'שילוט ממותג'], sortOrder: 1 },
+  { eventType: 'Corporate', name: 'ערב הוקרה', description: 'עיצוב ערב חגיגי לעובדים', price: 9500, features: ['קונספט מלא', 'במה מעוצבת', 'פינת צילום', 'מרכזי שולחן'], sortOrder: 2 },
+  { eventType: 'Private', name: 'אירוע ביתי', description: 'עיצוב חגיגי לאירוע בבית או בגינה', price: 1800, features: ['שולחן מרכזי', 'תאורה דקורטיבית', 'בלונים'], sortOrder: 1 },
+  { eventType: 'Private', name: 'אירוסין בגינה', description: 'עיצוב רומנטי עם פרחים ותאורה', price: 4600, features: ['קשת פרחים', 'תאורה דקורטיבית', 'פינת צילום'], sortOrder: 2 },
+];
+
 const CLIENTS = [
   { fullName: 'נועה לוי', email: 'noa.levi@example.com', phone: '050-1234567' },
   { fullName: 'דניאל כהן', email: 'daniel.cohen@example.com', phone: '052-7654321' },
@@ -67,46 +79,94 @@ const GALLERY: { title: string; category: EventType }[] = [
   { title: 'ארוחת ערב חגיגית בבית', category: 'Private' },
 ];
 
-async function main() {
-  console.log('🌱 Seeding EventStyle database...');
+export interface SeedOptions {
+  /** ב-Production לא נוצר אף נתון הדגמה */
+  isProduction: boolean;
+  adminEmail: string;
+  /** סיסמת המנהלת. ב-Production בלי סיסמה – המנהלת לא נוצרת */
+  adminPassword: string | null;
+  /** סיסמת לקוחות ההדגמה (פיתוח בלבד) */
+  clientPassword: string | null;
+  /** חבילות הדגמה לפי סוג אירוע (פיתוח בלבד). SEED_DEMO_PACKAGES=false מבטל */
+  demoPackages: boolean;
+  log?: (message: string) => void;
+}
 
-  // ---------- חבילות ----------
-  for (const pkg of PACKAGES) {
-    await prisma.package.upsert({ where: { name: pkg.name }, update: {}, create: pkg });
+/** קריאת ההגדרות ממשתני הסביבה. ב-Production אין סיסמאות ברירת מחדל ואין נתוני הדגמה */
+export function seedOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): SeedOptions {
+  const isProduction = env.NODE_ENV === 'production';
+  const password = (name: string, devDefault: string): string | null => {
+    const value = env[name]?.trim();
+    if (value) {
+      if (value.length < 8) throw new Error(`${name} must be at least 8 characters`);
+      return value;
+    }
+    return isProduction ? null : devDefault;
+  };
+  return {
+    isProduction,
+    adminEmail: (env.SEED_ADMIN_EMAIL ?? 'admin@eventstyle.example').trim().toLowerCase(),
+    adminPassword: password('SEED_ADMIN_PASSWORD', DEV_ADMIN_PASSWORD),
+    clientPassword: isProduction ? null : password('SEED_CLIENT_PASSWORD', DEV_CLIENT_PASSWORD),
+    demoPackages: !isProduction && env.SEED_DEMO_PACKAGES?.trim().toLowerCase() !== 'false',
+  };
+}
+
+export async function seed(prisma: PrismaClient, options: SeedOptions) {
+  const log = options.log ?? console.log;
+  const allowDemo = !options.isProduction;
+
+  // ---------- חבילות כלליות: רק בהקמה ראשונה (טבלה ריקה) ----------
+  // כך הרצה חוזרת לא תחזיר חבילה שהמנהלת שינתה את שמה או העבירה לארכיון
+  if ((await prisma.package.count()) === 0) {
+    await prisma.package.createMany({ data: BASE_PACKAGES });
+    log(`   ✓ ${BASE_PACKAGES.length} general packages`);
+  } else {
+    log('   ✓ packages already exist – general packages skipped');
   }
-  const packages = Object.fromEntries(
-    (await prisma.package.findMany()).map((pkg) => [pkg.name, pkg.id]),
-  ) as Record<string, number>;
-  console.log('   ✓ packages');
+
+  // ---------- חבילות הדגמה לפי סוג אירוע (פיתוח בלבד) ----------
+  if (allowDemo && options.demoPackages) {
+    let created = 0;
+    for (const [index, pkg] of DEMO_TYPE_PACKAGES.entries()) {
+      const exists = await prisma.package.findFirst({ where: { eventType: pkg.eventType, name: pkg.name } });
+      if (exists) continue; // לא דורסים ולא משנים חבילה קיימת
+      await prisma.package.create({
+        data: { ...pkg, imageUrl: `https://picsum.photos/seed/eventstyle-type-${index + 1}/800/600` },
+      });
+      created++;
+    }
+    log(`   ✓ demo packages by event type (${created} created)`);
+  }
 
   // ---------- מנהלת ----------
-  const adminEmail = (process.env.SEED_ADMIN_EMAIL ?? 'admin@eventstyle.example').trim().toLowerCase();
-  const adminPassword = resolvePassword('SEED_ADMIN_PASSWORD', DEV_ADMIN_PASSWORD);
-  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
+  const existingAdmin = await prisma.user.findUnique({ where: { email: options.adminEmail } });
   if (existingAdmin) {
-    console.log(`   ✓ admin already exists (${adminEmail})`);
-  } else if (!adminPassword) {
-    console.warn('   ⚠ SEED_ADMIN_PASSWORD is not set – admin was NOT created (required in production)');
+    log(`   ✓ admin already exists (${options.adminEmail})`);
+  } else if (!options.adminPassword) {
+    log('   ⚠ SEED_ADMIN_PASSWORD is not set – admin was NOT created (required in production)');
   } else {
     await prisma.user.create({
       data: {
         fullName: 'מנהלת הסטודיו',
-        email: adminEmail,
+        email: options.adminEmail,
         phone: '050-0000000',
-        passwordHash: await bcrypt.hash(adminPassword, 12),
+        passwordHash: await bcrypt.hash(options.adminPassword, 12),
         role: 'Admin',
         emailVerified: true,
       },
     });
-    console.log(`   ✓ admin created (${adminEmail})`);
+    log(`   ✓ admin created (${options.adminEmail})`);
   }
 
-  // ---------- לקוחות לדוגמה (מאומתים) ----------
-  const clientPassword = resolvePassword('SEED_CLIENT_PASSWORD', DEV_CLIENT_PASSWORD);
-  if (!clientPassword) {
-    console.warn('   ⚠ SEED_CLIENT_PASSWORD is not set – demo clients were NOT created');
-  } else {
-    const clientHash = await bcrypt.hash(clientPassword, 12);
+  if (!allowDemo) {
+    log('   ✓ production: demo clients, events and gallery items are never created');
+    return;
+  }
+
+  // ---------- לקוחות לדוגמה (מאומתים, פיתוח בלבד) ----------
+  if (options.clientPassword) {
+    const clientHash = await bcrypt.hash(options.clientPassword, 12);
     for (const client of CLIENTS) {
       await prisma.user.upsert({
         where: { email: client.email },
@@ -114,13 +174,16 @@ async function main() {
         create: { ...client, passwordHash: clientHash, role: 'Client', emailVerified: true },
       });
     }
-    console.log('   ✓ demo clients');
+    log('   ✓ demo clients');
   }
   const userIdByEmail = async (email: string) =>
     (await prisma.user.findFirst({ where: { email, role: 'Client', emailVerified: true } }))?.id ?? null;
 
-  // ---------- אירועים (רק אם הטבלה ריקה) ----------
+  // ---------- אירועים לדוגמה (רק אם הטבלה ריקה, פיתוח בלבד) ----------
   if ((await prisma.event.count()) === 0) {
+    const general = Object.fromEntries(
+      (await prisma.package.findMany({ where: { eventType: null } })).map((pkg) => [pkg.name, pkg.id]),
+    ) as Record<string, number>;
     const day = (offsetDays: number) => {
       const date = new Date();
       date.setUTCHours(0, 0, 0, 0);
@@ -140,17 +203,20 @@ async function main() {
       { eventName: 'יום הולדת 7 לאורי', clientName: 'יוסי מזרחי', clientEmail: 'yossi.mizrahi@example.com', eventType: 'Birthday', eventDate: day(25), location: 'פארק הירקון, תל אביב', pkg: 'Basic', themeColor: '#FFB347', guestCount: 30, budget: 900, status: 'New' },
     ];
 
+    // אירועי הדגמה משויכים רק לחבילות הכלליות שקיימות (אם המנהלת שינתה אותן – האירוע מדולג)
+    let created = 0;
     for (const { pkg, ...event } of events) {
-      await prisma.event.create({
-        data: { ...event, packageId: packages[pkg]!, userId: await userIdByEmail(event.clientEmail) },
-      });
+      const packageId = general[pkg];
+      if (!packageId) continue;
+      await prisma.event.create({ data: { ...event, packageId, userId: await userIdByEmail(event.clientEmail) } });
+      created++;
     }
-    console.log(`   ✓ ${events.length} demo events`);
+    log(`   ✓ ${created} demo events`);
   } else {
-    console.log('   ✓ events already exist – skipped');
+    log('   ✓ events already exist – skipped');
   }
 
-  // ---------- גלריה (רק אם הטבלה ריקה) ----------
+  // ---------- גלריה לדוגמה (רק אם הטבלה ריקה, פיתוח בלבד) ----------
   if ((await prisma.galleryItem.count()) === 0) {
     await prisma.galleryItem.createMany({
       data: GALLERY.map((item, index) => ({
@@ -159,22 +225,33 @@ async function main() {
         publicId: null,
       })),
     });
-    console.log(`   ✓ ${GALLERY.length} gallery items`);
+    log(`   ✓ ${GALLERY.length} gallery items`);
   } else {
-    console.log('   ✓ gallery already has items – skipped');
+    log('   ✓ gallery already has items – skipped');
   }
-
-  if (!isProduction) {
-    console.log('\nDevelopment logins (do not use in production):');
-    console.log(`   Admin:  ${adminEmail} / ${process.env.SEED_ADMIN_PASSWORD?.trim() ? '(from SEED_ADMIN_PASSWORD)' : DEV_ADMIN_PASSWORD}`);
-    console.log(`   Client: ${CLIENTS.map((c) => c.email).join(', ')} / ${process.env.SEED_CLIENT_PASSWORD?.trim() ? '(from SEED_CLIENT_PASSWORD)' : DEV_CLIENT_PASSWORD}`);
-  }
-  console.log('🌱 Done.');
 }
 
-main()
-  .catch((error) => {
+async function main() {
+  const prisma = new PrismaClient();
+  const options = seedOptionsFromEnv();
+  try {
+    console.log(`🌱 Seeding EventStyle database (${options.isProduction ? 'production' : 'development'})...`);
+    await seed(prisma, options);
+    if (!options.isProduction) {
+      console.log('\nDevelopment logins (do not use in production):');
+      console.log(`   Admin:  ${options.adminEmail} / ${process.env.SEED_ADMIN_PASSWORD?.trim() ? '(from SEED_ADMIN_PASSWORD)' : DEV_ADMIN_PASSWORD}`);
+      console.log(`   Client: ${CLIENTS.map((c) => c.email).join(', ')} / ${process.env.SEED_CLIENT_PASSWORD?.trim() ? '(from SEED_CLIENT_PASSWORD)' : DEV_CLIENT_PASSWORD}`);
+    }
+    console.log('🌱 Done.');
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+// רץ רק כשמפעילים את הקובץ ישירות (npm run db:seed / start:render), לא כשבדיקות מייבאות אותו
+if (require.main === module) {
+  main().catch((error) => {
     console.error('Seed failed:', error);
     process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+  });
+}

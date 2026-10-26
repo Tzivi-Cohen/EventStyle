@@ -362,9 +362,31 @@ export interface Package {
   id: number;
   name: string;
   description: string;
+  price: number;                 // מחיר המחירון הנוכחי. לא נשמר בהזמנות
+  features: string[];
+  imageUrl: string;
+  eventType: EventType | null;   // null = חבילה כללית שמתאימה לכל סוג אירוע
+  sortOrder: number;             // סדר ההצגה בתוך הסוג
+}
+
+/** חבילה בממשק הניהול (GET /admin/packages, POST/PUT /packages) */
+export interface AdminPackage extends Package {
+  isActive: boolean;             // false = בארכיון
+  eventCount?: number;           // כמה הזמנות משתמשות בחבילה
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** גוף POST /packages ו-PUT /packages/:id */
+export interface PackageInput {
+  name: string;
+  description: string;
   price: number;
   features: string[];
-  imageUrl: string | null;
+  imageUrl: string;              // https בלבד
+  eventType: EventType | null;   // חובה בגוף הבקשה
+  isActive?: boolean;
+  sortOrder?: number;
 }
 
 export interface GalleryItem {
@@ -478,7 +500,7 @@ export interface ApiErrorBody {
 | 3 | POST | `/auth/resend-code` | ✘ | 🌐 | שליחה חוזרת של קוד |
 | 4 | POST | `/auth/login` | ✘ | 🌐 | התחברות |
 | 5 | GET | `/auth/me` | ✔ | 👤 | פרטי המשתמש המחובר |
-| 6 | GET | `/packages` | ✘ | 🌐 | כל החבילות |
+| 6 | GET | `/packages?eventType=` | ✘ | 🌐 | המחירון: חבילות פעילות, עם סינון רשות לפי סוג אירוע |
 | 7 | GET | `/gallery` | ✘ | 🌐 | גלריה, עם סינון ועמודים |
 | 8 | POST | `/gallery` | ✔ | 👑 | הוספת תמונה לגלריה |
 | 9 | DELETE | `/gallery/:id` | ✔ | 👑 | מחיקת תמונה מהגלריה |
@@ -494,8 +516,12 @@ export interface ApiErrorBody {
 | 19 | GET | `/health` | ✘ | 🌐 | בדיקת פעילות השרת ומסד הנתונים |
 | 20 | POST | `/auth/google` | ✘ | 🌐 | **חדש:** התחברות או הרשמה עם Google |
 | 21 | PATCH | `/auth/me` | ✔ | 👤 | **חדש:** עריכת הפרופיל של המשתמש המחובר |
+| 22 | POST | `/packages` | ✔ | 👑 | **חדש:** יצירת חבילה |
+| 23 | PUT | `/packages/:id` | ✔ | 👑 | **חדש:** עריכת חבילה: מחיר, פרטים, סוג, סדר, החזרה מארכיון |
+| 24 | DELETE | `/packages/:id` | ✔ | 👑 | **חדש:** העברת חבילה לארכיון (ללא מחיקה) |
+| 25 | GET | `/admin/packages` | ✔ | 👑 | **חדש:** כל החבילות לניהול, כולל ארכיון ומספר הזמנות |
 
-> המספרים 20 ו־21 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא שלהם נמצא בפרק 4.2, אחרי `GET /auth/me`.
+> המספרים 20–25 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא של 20 ו־21 נמצא בפרק 4.2, אחרי `GET /auth/me`, ושל 22–25 בפרק 4.3.
 
 **כללים שחלים על כל ה־Endpoints:**
 - **Path Parameters:** `:id` ו־`:photoId` חייבים להיות מספרים שלמים חיוביים. אחרת מתקבל `400 VALIDATION_ERROR` עם `field: "id"` (או `"photoId"`).
@@ -814,36 +840,124 @@ export interface ApiErrorBody {
 
 ---
 
-### 4.3 Packages – חבילות עיצוב
+### 4.3 Packages – מחירון וחבילות לפי סוג אירוע
+
+**איך זה בנוי:**
+- לכל חבילה יש `eventType`: סוג אירוע מסוים, או `null` = **חבילה כללית** שמתאימה לכל סוג (Basic, Premium ו־Luxury הן כלליות).
+- **מחיר החבילה הוא מחירון בלבד.** הוא לא נשמר בהזמנה, ולכן שינוי מחיר לא משנה שום הזמנה קיימת. השדה `budget` של הזמנה הוא **תקציב העיצוב** של האירוע, ולא מחיר החבילה. אל תציגי את מחיר החבילה הנוכחי כ"מחיר ששולם" בהזמנה ישנה.
+- **אין תשלום באתר:** המחירון להצגה בלבד, והזמנה נעשית ביצירת קשר עם הסטודיו.
+- **"מחיקה" = ארכיון:** חבילה בארכיון לא מופיעה במחירון ואי אפשר לבחור בה להזמנה חדשה, אבל הזמנות קיימות ממשיכות להציג אותה.
 
 #### 6. `GET /packages` 🌐
 
-- אין פרמטרים.
-- החבילות קבועות ומגיעות מה־Seed: Basic, Premium ו־Luxury.
+| פרמטר | חובה | ערכים |
+|---|---|---|
+| `eventType` | ✘ | `Birthday` / `BatMitzvah` / `Brit` / `Corporate` / `Private`. ערך אחר מחזיר `400` |
 
-**Response `200`:** `Package[]`, ממוינות לפי מחיר מהזול ליקר.
+- **בלי פרמטר:** כל החבילות **הפעילות** (מכל הסוגים, וגם הכלליות).
+- **עם `eventType`:** החבילות של הסוג, ואחריהן החבילות הכלליות. כך אפשר להציג בעמוד של סוג אירוע שני חלקים: "חבילות יום הולדת" (`eventType === 'Birthday'`) ו"חבילות כלליות" (`eventType === null`).
+- **סדר:** סוג (הכלליות בסוף), אחר כך `sortOrder`, מחיר ו־`id`.
+
+**Response `200`:** `Package[]`
 ```json
 [
+  {
+    "id": 4,
+    "name": "יום הולדת קלאסי",
+    "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+    "price": 1500,
+    "features": ["שולחן מתוקים מעוצב", "קשת בלונים קטנה", "שלט ברכה אישי"],
+    "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+    "eventType": "Birthday",
+    "sortOrder": 1
+  },
   {
     "id": 1,
     "name": "Basic",
     "description": "עיצוב שולחן מרכזי, צבעים ואביזרים בסיסיים",
     "price": 1200,
     "features": ["עיצוב שולחן מרכזי", "התאמת צבעים לאירוע", "אביזרים בסיסיים"],
-    "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600"
-  },
-  {
-    "id": 2,
-    "name": "Premium",
-    "description": "עיצוב שולחן, בלונים, רקע צילום ואביזרים",
-    "price": 2800,
-    "features": ["עיצוב שולחן", "בלונים", "רקע צילום", "אביזרים משלימים"],
-    "imageUrl": "https://picsum.photos/seed/eventstyle-premium/800/600"
+    "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600",
+    "eventType": null,
+    "sortOrder": 0
   }
 ]
 ```
 
-> אל תכתבי את מזהי החבילות (`id`) בקוד. טעני אותם מ־`GET /packages` ובני מהם את רשימת הבחירה (`<select>`).
+> אל תכתבי את מזהי החבילות (`id`) בקוד. טעני אותם מ־`GET /packages` ובני מהם את רשימת הבחירה (`<select>`). בטופס הזמנה, טעני `GET /packages?eventType=<הסוג שנבחר>` – כך יוצגו רק חבילות שמתאימות לסוג.
+
+#### 22. `POST /packages` 👑 – יצירת חבילה
+
+**Request Body:** `PackageInput`
+| שדה | טיפוס | חובה | כללים |
+|---|---|---|---|
+| `name` | string | ✔ | 2–50 תווים. ייחודי בתוך הסוג (או בין החבילות הכלליות) |
+| `description` | string | ✔ | 2–500 תווים |
+| `price` | number | ✔ | 0 ומעלה, עד 2 ספרות אחרי הנקודה |
+| `features` | string[] | ✔ | 1–20 פריטים, כל אחד 1–100 תווים |
+| `imageUrl` | string | ✔ | כתובת `https` עד 500 תווים (אין העלאת קובץ לחבילה) |
+| `eventType` | EventType \| null | ✔ | סוג אירוע, או `null` לחבילה כללית. **חובה לשלוח** |
+| `isActive` | boolean | ✘ | ברירת מחדל `true` |
+| `sortOrder` | integer | ✘ | 0–1000, ברירת מחדל `0` |
+
+```json
+{
+  "name": "יום הולדת קלאסי",
+  "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+  "price": 1500,
+  "features": ["שולחן מתוקים מעוצב", "קשת בלונים קטנה"],
+  "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+  "eventType": "Birthday",
+  "sortOrder": 1
+}
+```
+
+**Response `201`:** `AdminPackage` (כולל `isActive`, `eventCount: 0`, `createdAt`, `updatedAt`).
+
+#### 23. `PUT /packages/:id` 👑 – עריכת חבילה
+
+- **החלפה מלאה:** שולחים את כל שדות החובה. `isActive` ו־`sortOrder` שלא נשלחו לא משתנים.
+- **עדכון מחיר:** משנה רק את המחירון. הזמנות קיימות לא משתנות.
+- **החזרה מהארכיון:** `isActive: true`.
+- **שינוי `eventType`:**
+  - ל־`null` (כללית): תמיד מותר.
+  - לסוג מסוים: מותר רק אם **כל** ההזמנות שמשתמשות בחבילה הן מאותו סוג. אחרת `409` עם `details: { "conflictingEvents": 2 }`, ושום דבר לא משתנה.
+
+**Response `200`:** `AdminPackage`.
+
+#### 24. `DELETE /packages/:id` 👑 – העברה לארכיון
+
+- **אין מחיקה פיזית.** החבילה מקבלת `isActive: false`, נעלמת מ־`GET /packages`, ונשארת ב־`GET /admin/packages`.
+- **Response `204`**, גם אם החבילה כבר בארכיון.
+
+#### 25. `GET /admin/packages` 👑 – כל החבילות לניהול
+
+| פרמטר | ערכים |
+|---|---|
+| `eventType` | סוג אירוע, או `general` לחבילות הכלליות בלבד |
+| `isActive` | `true` / `false` |
+
+**Response `200`:** `AdminPackage[]`, כולל `eventCount` (כמה הזמנות משתמשות בחבילה), באותו סדר כמו המחירון הציבורי.
+
+**שגיאות בנתיבי הניהול:**
+| HTTP | code | מתי |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | שדה חסר או לא תקין, שדה לא מוכר, או `id` לא מספרי |
+| 401 | `UNAUTHORIZED` | לא מחוברת |
+| 403 | `FORBIDDEN` | לקוחה (לא מנהלת) |
+| 404 | `NOT_FOUND` | `Package not found` |
+| 409 | `CONFLICT` | `A package with this name already exists for this event type`, או שינוי סוג שלא מתאים להזמנות קיימות |
+
+**אחרי פעולת ניהול:** טעני מחדש את `GET /admin/packages`, ואת `GET /packages` אם הוא מוצג באותו מסך.
+
+#### התאמה בין חבילה להזמנה (`POST /events`, `PUT /events/:id`)
+| מצב | תוצאה |
+|---|---|
+| חבילה מסוג ההזמנה, או כללית | ✔ |
+| חבילה מסוג אחר | `400`: `Package is for Birthday events and does not match eventType BatMitzvah` |
+| חבילה בארכיון בהזמנה חדשה, או מעבר אליה | `400`: `Package is archived and cannot be selected` |
+| עריכת הזמנה שכבר משויכת לחבילה בארכיון, בלי להחליף חבילה | ✔ |
+| שינוי `eventType` של הזמנה לסוג שלא מתאים לחבילה שלה | `400` (אותה הודעת חוסר התאמה) |
 
 ---
 
@@ -1948,7 +2062,8 @@ function AdminEventsTable() {
 |---|---|---|---|---|---|
 | **דף הבית** `/` | היכרות עם הסטודיו | `GET /gallery?limit=6`, `GET /packages` | עבודות נבחרות (`data[].url`, `data[].title`), תקציר חבילות (`name`, `price`) | מעבר לגלריה, לחבילות, להרשמה או להתחברות | 🌐 |
 | **גלריה** `/gallery` | הצגת עבודות לפי סוג אירוע | `GET /gallery?category=...&page=...&limit=...` | תמונות (`url`, `title`, `category` בעברית) + פקדי עמודים או "טען עוד" | סינון לפי קטגוריה ("הכול" = בלי פרמטר), מעבר בין עמודים | 🌐 |
-| **חבילות** `/packages` | השוואת חבילות | `GET /packages` | `name`, `description`, `price`, `features[]`, `imageUrl` | – | 🌐 |
+| **חבילות** `/packages` | מחירון לפי סוג אירוע | `GET /packages?eventType=...` | בחירת סוג אירוע, ואז `name`, `description`, `price`, `features[]`, `imageUrl`. חלוקה ל"חבילות הסוג" ו"חבילות כלליות" לפי `eventType`. הסבר שהזמנה נעשית ביצירת קשר | בחירת סוג אירוע | 🌐 |
+| **ניהול חבילות** `/admin/packages` | ניהול המחירון | `GET /admin/packages`, `POST /packages`, `PUT /packages/:id`, `DELETE /packages/:id` | טבלה: שם, סוג (או "כללית"), מחיר, `sortOrder`, פעילה/ארכיון, `eventCount` | יצירה, עריכה ועדכון מחיר, שינוי סדר, העברה לארכיון והחזרה | 👑 |
 | **הרשמה** `/register` | פתיחת חשבון לקוחה | `POST /auth/register`, `POST /auth/google` | טופס: `fullName`, `email`, `phone`, `password` + שגיאות שדה, וכפתור "המשך עם Google" | שליחת טופס ואז מעבר לאימות, או הרשמה עם Google | 🌐 |
 | **אימות אימייל** `/verify-email` | הזנת קוד בן 6 ספרות | `POST /auth/verify-email`, `POST /auth/resend-code` | אימייל, שדה קוד, ניסיונות שנותרו, ספירה לאחור | אימות, שליחה חוזרת | 🌐 (אחרי הרשמה, התחברות, או התחברות Google עם כתובת שאינה Gmail) |
 | **התחברות** `/login` | כניסה למערכת | `POST /auth/login`, `POST /auth/google` | טופס: `email`, `password`, וכפתור "המשך עם Google" | התחברות עם סיסמה או עם Google. אם `emailVerified=false`, מעבר לאימות | 🌐 |
@@ -2006,10 +2121,13 @@ function AdminEventsTable() {
 | **הוספת סיסמה למשתמש Google** | אין. משתמש שנרשם עם Google מתחבר רק עם Google | – |
 | **שינוי אימייל** | אין. האימייל לקריאה בלבד | – |
 | **ניתוק חשבון Google** | אין | – |
-| **עמודים ב־`GET /packages`** | אין צורך. יש 3 חבילות קבועות, והתשובה נשארה מערך | – |
+| **עמודים ב־`GET /packages`** | אין צורך. המחירון קטן, והתשובה נשארה מערך | – |
 | **ניהול משתמשים** (רשימת לקוחות, שינוי תפקיד, מחיקה) | אין | – |
 | **יצירת Admin נוסף** | אין. Admin נוצר רק ב־Seed | – |
-| **ניהול חבילות** (הוספה, עריכה, מחיקה) | אין. 3 חבילות קבועות מה־Seed | הצגה בלבד |
+| **מחיקה פיזית של חבילה** | אין. רק העברה לארכיון (`DELETE /packages/:id`) | – |
+| **העלאת תמונה לחבילה** | אין. `imageUrl` הוא כתובת https | הזנת כתובת |
+| **תשלום או הזמנה אוטומטית** | אין. המחירון להצגה בלבד | יצירת קשר עם הסטודיו |
+| **מחיר שסוכם בהזמנה** | אין שדה כזה. `budget` הוא תקציב העיצוב, ומחיר החבילה לא נשמר בהזמנה | – |
 | **הזמנה או בקשת שירות של לקוחה** | אין. **רק המנהלת יוצרת אירועים** | – |
 | **טופס "צור קשר"** | אין | – |
 | **שליחת מיילים** (קוד אימות, התראות) | אין. אין שירות מיילים חיצוני; קוד האימות מודפס ביומן השרת | לא להבטיח למשתמשת שתקבל מייל |

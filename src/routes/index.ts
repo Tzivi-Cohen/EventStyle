@@ -2,7 +2,9 @@ import { Router } from 'express';
 import * as auth from '../controllers/auth.controller';
 import * as events from '../controllers/events.controller';
 import * as gallery from '../controllers/gallery.controller';
-import * as system from '../controllers/system.controller';import { authenticate, requireAdmin } from '../middleware/auth';
+import * as packages from '../controllers/packages.controller';
+import * as system from '../controllers/system.controller';
+import { authenticate, requireAdmin } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimit';
 import { uploadManyImages, uploadSingleImage } from '../middleware/upload';
 
@@ -36,9 +38,22 @@ eventsRouter.delete('/:id', requireAdmin, events.deleteEvent);
 eventsRouter.post('/:id/photos', requireAdmin, uploadManyImages('photos'), events.addEventPhotos);
 eventsRouter.delete('/:id/photos/:photoId', requireAdmin, events.deleteEventPhoto);
 
+// מחירון: צפייה ציבורית, ניהול (יצירה, עריכה, ארכיון) למנהלת בלבד
+const packagesRouter = Router();
+packagesRouter.get('/', packages.listPackages);
+packagesRouter.post('/', authenticate, requireAdmin, packages.createPackage);
+packagesRouter.put('/:id', authenticate, requireAdmin, packages.updatePackage);
+packagesRouter.delete('/:id', authenticate, requireAdmin, packages.archivePackage); // ארכיון, לא מחיקה
+
+// ממשק ניהול: כל הנתיבים כאן למנהלת בלבד
+const adminRouter = Router();
+adminRouter.use(authenticate, requireAdmin);
+adminRouter.get('/packages', packages.listAdminPackages);
+
 export const apiRouter = Router();
 apiRouter.get('/health', system.health);
-apiRouter.get('/packages', system.getPackages);
+apiRouter.use('/packages', packagesRouter);
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/gallery', galleryRouter);
 apiRouter.use('/events', eventsRouter);
+apiRouter.use('/admin', adminRouter);

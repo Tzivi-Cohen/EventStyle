@@ -3,6 +3,7 @@ import { SORT_FIELDS } from '../schemas/event.schema';
 import { ALLOWED_MIME_TYPES, MAX_FILES_PER_REQUEST, MAX_FILE_SIZE_MB } from '../middleware/upload';
 import { VERIFICATION } from '../config/verification';
 import { ADDRESS_MAX_LENGTH } from '../schemas/auth.schema';
+import { MAX_FEATURES, MAX_SORT_ORDER } from '../schemas/package.schema';
 
 /**
  * מסמך OpenAPI 3 של EventStyle.
@@ -149,7 +150,27 @@ const examplePackage = {
   price: 1200,
   features: ['עיצוב שולחן מרכזי', 'התאמת צבעים', 'אביזרים בסיסיים'],
   imageUrl: 'https://picsum.photos/seed/eventstyle-basic/800/600',
+  eventType: null,
+  sortOrder: 0,
 };
+const exampleTypePackage = {
+  id: 4,
+  name: 'יום הולדת קלאסי',
+  description: 'שולחן מתוקים ובלונים בצבעי האירוע',
+  price: 1500,
+  features: ['שולחן מתוקים מעוצב', 'קשת בלונים קטנה', 'שלט ברכה אישי'],
+  imageUrl: 'https://picsum.photos/seed/eventstyle-type-1/800/600',
+  eventType: 'Birthday',
+  sortOrder: 1,
+};
+const exampleAdminPackage = {
+  ...exampleTypePackage,
+  isActive: true,
+  eventCount: 2,
+  createdAt: '2026-10-27T09:00:00.000Z',
+  updatedAt: '2026-10-27T09:30:00.000Z',
+};
+const examplePackageBody = (({ id: _id, ...rest }) => rest)(exampleTypePackage);
 const exampleGallery = {
   id: 3,
   title: 'בת מצווה בגווני זהב',
@@ -176,7 +197,8 @@ export const openApiDocument = {
   servers: [{ url: '/', description: 'This server' }],
   tags: [
     { name: 'Auth', description: 'הרשמה, התחברות (סיסמה או Google), אימות אימייל ופרופיל' },
-    { name: 'Packages', description: 'חבילות עיצוב' },
+    { name: 'Packages', description: 'מחירון וחבילות עיצוב לפי סוג אירוע' },
+    { name: 'Admin', description: 'ממשק ניהול (מנהלת בלבד)' },
     { name: 'Gallery', description: 'גלריית עיצובים ציבורית' },
     { name: 'Events', description: 'אירועים (פרטיים – דורש התחברות)' },
     { name: 'Event Photos', description: 'תמונות אירוע' },    { name: 'System', description: 'בדיקת פעילות' },
@@ -322,16 +344,59 @@ export const openApiDocument = {
       },
       Package: {
         type: 'object',
-        required: ['id', 'name', 'description', 'price', 'features', 'imageUrl'],
+        required: ['id', 'name', 'description', 'price', 'features', 'imageUrl', 'eventType', 'sortOrder'],
         properties: {
           id: { type: 'integer' },
           name: { type: 'string' },
           description: { type: 'string' },
-          price: { type: 'number', description: 'Demo price (ILS)' },
+          price: {
+            type: 'number',
+            description: 'Current list price (ILS, demo). Not stored in events – changing it never changes existing events',
+          },
           features: { type: 'array', items: { type: 'string' } },
           imageUrl: { type: 'string' },
+          eventType: {
+            allOf: [ref('EventType')],
+            nullable: true,
+            description: 'null = general package that fits every event type',
+          },
+          sortOrder: { type: 'integer', minimum: 0, description: 'Display order inside the event type' },
         },
         example: examplePackage,
+      },
+      AdminPackage: {
+        description: 'חבילה בממשק הניהול: כולל ארכיון ומספר ההזמנות שמשתמשות בחבילה',
+        allOf: [
+          ref('Package'),
+          {
+            type: 'object',
+            required: ['isActive', 'eventCount', 'createdAt', 'updatedAt'],
+            properties: {
+              isActive: { type: 'boolean', description: 'false = archived (hidden from the public price list)' },
+              eventCount: { type: 'integer', minimum: 0, description: 'How many events use this package' },
+              createdAt: { type: 'string', format: 'date-time' },
+              updatedAt: { type: 'string', format: 'date-time' },
+            },
+          },
+        ],
+        example: exampleAdminPackage,
+      },
+      PackageInput: {
+        type: 'object',
+        description: 'שדות לא מוכרים נדחים. eventType חובה בגוף הבקשה (null = חבילה כללית).',
+        additionalProperties: false,
+        required: ['name', 'description', 'price', 'features', 'imageUrl', 'eventType'],
+        properties: {
+          name: { type: 'string', minLength: 2, maxLength: 50, description: 'Unique inside the event type (or among general packages)' },
+          description: { type: 'string', minLength: 2, maxLength: 500 },
+          price: { type: 'number', minimum: 0, description: 'Up to 2 decimal places' },
+          features: { type: 'array', minItems: 1, maxItems: MAX_FEATURES, items: { type: 'string', minLength: 1, maxLength: 100 } },
+          imageUrl: { type: 'string', format: 'uri', maxLength: 500, description: 'https URL' },
+          eventType: { allOf: [ref('EventType')], nullable: true },
+          isActive: { type: 'boolean', description: 'Create default: true. Update: unchanged if omitted (true restores from the archive)' },
+          sortOrder: { type: 'integer', minimum: 0, maximum: MAX_SORT_ORDER, description: 'Create default: 0. Update: unchanged if omitted' },
+        },
+        example: examplePackageBody,
       },
       GalleryItem: {
         type: 'object',
@@ -637,9 +702,95 @@ export const openApiDocument = {
     '/api/packages': {
       get: {
         tags: ['Packages'],
-        summary: 'כל חבילות העיצוב (Guest)',
+        summary: 'המחירון הציבורי – חבילות פעילות בלבד (Guest)',
+        description:
+          'בלי פרמטרים: כל החבילות הפעילות. עם eventType: החבילות של הסוג, ואחריהן החבילות הכלליות (eventType=null). ' +
+          'הסדר: סוג (כלליות בסוף), sortOrder, מחיר, id. חבילות בארכיון לא מוחזרות.',
+        parameters: [{ name: 'eventType', in: 'query', required: false, schema: ref('EventType') }],
         responses: {
-          200: { description: 'Packages sorted by price', content: jsonContent({ type: 'array', items: ref('Package') }, [examplePackage]) },
+          200: {
+            description: 'Active packages',
+            content: jsonContent({ type: 'array', items: ref('Package') }, [exampleTypePackage, examplePackage]),
+          },
+          400: R.validation,
+        },
+      },
+      post: {
+        tags: ['Packages'],
+        summary: 'יצירת חבילה (Admin)',
+        security: bearer,
+        requestBody: { required: true, content: jsonContent(ref('PackageInput')) },
+        responses: {
+          201: { description: 'Created', content: jsonContent(ref('AdminPackage'), { ...exampleAdminPackage, eventCount: 0 }) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          409: errorResponse('Name already used in this event type', 'CONFLICT', 'A package with this name already exists for this event type'),
+        },
+      },
+    },
+    '/api/packages/{id}': {
+      put: {
+        tags: ['Packages'],
+        summary: 'עריכת חבילה – פרטים, מחיר, סוג, סדר, ארכיון (Admin)',
+        description:
+          'החלפה מלאה (כל שדות החובה). שינוי מחיר לא משנה הזמנות קיימות. ' +
+          'שינוי eventType מותר רק אם לא נוצר חוסר התאמה: מעבר לכללית (null) תמיד מותר, ' +
+          'ומעבר לסוג מסוים רק אם כל ההזמנות של החבילה מאותו סוג – אחרת 409. isActive=true מחזיר מהארכיון.',
+        security: bearer,
+        parameters: [idParam('id', 'Package id')],
+        requestBody: { required: true, content: jsonContent(ref('PackageInput')) },
+        responses: {
+          200: { description: 'Updated', content: jsonContent(ref('AdminPackage'), exampleAdminPackage) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          404: errorResponse('Package not found', 'NOT_FOUND', 'Package not found'),
+          409: errorResponse(
+            'Duplicate name, or the new event type does not match existing events',
+            'CONFLICT',
+            'Cannot change the event type: 1 existing event(s) of another type use this package',
+            { conflictingEvents: 1 },
+          ),
+        },
+      },
+      delete: {
+        tags: ['Packages'],
+        summary: 'העברת חבילה לארכיון – ללא מחיקה פיזית (Admin)',
+        description:
+          'החבילה מוסתרת מהמחירון הציבורי ואי אפשר לבחור בה להזמנות חדשות. הזמנות קיימות ממשיכות להפנות אליה. ' +
+          'החזרה מהארכיון: PUT עם isActive=true.',
+        security: bearer,
+        parameters: [idParam('id', 'Package id')],
+        responses: {
+          204: { description: 'Archived – הועברה לארכיון (ללא תוכן בתשובה)' },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          404: errorResponse('Package not found', 'NOT_FOUND', 'Package not found'),
+        },
+      },
+    },
+    '/api/admin/packages': {
+      get: {
+        tags: ['Admin'],
+        summary: 'כל החבילות לניהול, כולל ארכיון ומספר הזמנות (Admin)',
+        security: bearer,
+        parameters: [
+          {
+            name: 'eventType',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', enum: [...EVENT_TYPES, 'general'] },
+            description: 'סוג אירוע, או general לחבילות הכלליות בלבד',
+          },
+          { name: 'isActive', in: 'query', required: false, schema: { type: 'string', enum: ['true', 'false'] } },
+        ],
+        responses: {
+          200: { description: 'All packages', content: jsonContent({ type: 'array', items: ref('AdminPackage') }, [exampleAdminPackage]) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
         },
       },
     },
@@ -725,7 +876,9 @@ export const openApiDocument = {
       post: {
         tags: ['Events'],
         summary: 'יצירת אירוע (Admin)',
-        description: 'אם קיים לקוח **מאומת** עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שהלקוח יירשם ויאמת.',
+        description:
+          'אם קיים לקוח **מאומת** עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שהלקוח יירשם ויאמת.\n\n' +
+          '**חבילה:** חייבת להיות פעילה, ומסוג האירוע או כללית (eventType=null). אחרת 400 על השדה packageId.',
         security: bearer,
         requestBody: { required: true, content: jsonContent(ref('EventInput')) },
         responses: {
@@ -770,7 +923,9 @@ export const openApiDocument = {
       put: {
         tags: ['Events'],
         summary: 'עריכת אירוע – החלפה מלאה (Admin)',
-        description: 'יש לשלוח את כל שדות החובה. status אופציונלי (אם לא נשלח – לא משתנה). הקישור ללקוח מחושב מחדש לפי clientEmail.',
+        description:
+          'יש לשלוח את כל שדות החובה. status אופציונלי (אם לא נשלח – לא משתנה). הקישור ללקוח מחושב מחדש לפי clientEmail.\n\n' +
+          '**חבילה:** מסוג האירוע או כללית – גם כשמשנים רק את eventType. חבילה בארכיון מותרת רק אם האירוע כבר משויך אליה.',
         security: bearer,
         parameters: [idParam()],
         requestBody: { required: true, content: jsonContent(ref('EventInput')) },

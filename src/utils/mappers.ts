@@ -35,6 +35,7 @@ export function toPublicUser(
   };
 }
 
+/** חבילה במחירון הציבורי. eventType=null פירושו חבילה כללית שמתאימה לכל סוג אירוע */
 export function toPackageDto(pkg: Package) {
   return {
     id: pkg.id,
@@ -43,6 +44,19 @@ export function toPackageDto(pkg: Package) {
     price: decimalToNumber(pkg.price),
     features: pkg.features,
     imageUrl: pkg.imageUrl,
+    eventType: pkg.eventType,
+    sortOrder: pkg.sortOrder,
+  };
+}
+
+/** חבילה בממשק הניהול: גם מצב הארכיון וכמה הזמנות משתמשות בה */
+export function toAdminPackageDto(pkg: Package & { _count?: { events: number } }) {
+  return {
+    ...toPackageDto(pkg),
+    isActive: pkg.isActive,
+    ...(pkg._count && { eventCount: pkg._count.events }),
+    createdAt: pkg.createdAt.toISOString(),
+    updatedAt: pkg.updatedAt.toISOString(),
   };
 }
 

@@ -62,15 +62,27 @@ model User {
 }
 
 model Package {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique @db.VarChar(50)
-  description String   @db.VarChar(500)
-  price       Decimal  @db.Decimal(10, 2)
+  id          Int        @id @default(autoincrement())
+  // השם ייחודי בתוך אותו סוג אירוע. לחבילות כלליות (eventType = null) יש אינדקס ייחודי חלקי
+  // שנוצר ב-Migration בלבד (Packages_general_name_key) – Prisma לא יודעת לתאר אותו כאן
+  name        String     @db.VarChar(50)
+  description String     @db.VarChar(500)
+  // מחיר המחירון הנוכחי (הדגמה). אינו נשמר בהזמנות, ולכן שינוי שלו לא משנה הזמנות קיימות
+  price       Decimal    @db.Decimal(10, 2)
   features    String[]
-  imageUrl    String   @db.VarChar(500)
+  imageUrl    String     @db.VarChar(500)
+  // null = חבילה כללית שמתאימה לכל סוג אירוע
+  eventType   EventType?
+  // false = בארכיון: מוסתרת מהאתר הציבורי, אבל הזמנות קיימות ממשיכות להפנות אליה
+  isActive    Boolean    @default(true)
+  sortOrder   Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   events Event[]
 
+  @@unique([eventType, name])
+  @@index([eventType, isActive])
   @@map("Packages")
 }
 

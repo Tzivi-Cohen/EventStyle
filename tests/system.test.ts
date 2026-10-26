@@ -43,7 +43,7 @@ describe('Swagger / OpenAPI', () => {
     await expect(SwaggerParser.validate(copy)).resolves.toBeTruthy();
   });
 
-  it('documents all 21 operations (17 required + 2 email verification + Google sign-in + profile edit)', () => {
+  it('documents all 25 operations (17 required + 2 email verification + Google sign-in + profile edit + 4 package management)', () => {
     const operations = Object.entries(openApiDocument.paths).flatMap(([path, methods]) =>
       Object.keys(methods).map((method) => `${method.toUpperCase()} ${path}`),
     );
@@ -57,6 +57,10 @@ describe('Swagger / OpenAPI', () => {
         'POST /api/auth/verify-email',
         'POST /api/auth/resend-code',
         'GET /api/packages',
+        'POST /api/packages',
+        'PUT /api/packages/{id}',
+        'DELETE /api/packages/{id}',
+        'GET /api/admin/packages',
         'GET /api/gallery',
         'POST /api/gallery',
         'DELETE /api/gallery/{id}',

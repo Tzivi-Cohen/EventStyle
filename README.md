@@ -9,9 +9,11 @@
 
 | משתמש | מה מותר לו |
 |---|---|
-| **Guest** – אורח | דף הבית, גלריה (עם סינון לפי סוג אירוע), חבילות, הרשמה והתחברות |
+| **Guest** – אורח | דף הבית, גלריה (עם סינון לפי סוג אירוע), מחירון חבילות לפי סוג אירוע, הרשמה והתחברות |
 | **Client** – לקוח | כל מה שמותר לאורח, וגם צפייה באירועים שלו בלבד: פרטים, סטטוס ותמונות |
-| **Admin** – מנהלת | ניהול מלא של האירועים (יצירה, עריכה, מחיקה, סטטוס, תמונות), ניהול הגלריה, חיפוש, סינון ומיון |
+| **Admin** – מנהלת | ניהול מלא של האירועים (יצירה, עריכה, מחיקה, סטטוס, תמונות), ניהול הגלריה, ניהול המחירון (חבילות, מחירים, סדר, ארכיון), חיפוש, סינון ומיון |
+
+- **מחירון:** לכל חבילה יש סוג אירוע, או שהיא כללית (מתאימה לכל סוג). המחירון להצגה בלבד – אין תשלום באתר. מחיר החבילה לא נשמר בהזמנה, ולכן שינוי מחיר לא משנה הזמנות קיימות. הסרת חבילה = ארכיון בלבד.
 
 - כל מי שנרשם באתר מקבל תמיד תפקיד **Client**. חשבון **Admin** נוצר רק ב־Seed.
 - **אימות אימייל בקוד:** אחרי ההרשמה נוצר קוד בן 6 ספרות. אין שירות מיילים חיצוני, ולכן הקוד מודפס ביומן השרת (`EMAIL_PROVIDER=console`). הקוד תקף ל־10 דקות, אפשר להשתמש בו פעם אחת, ואחרי 5 ניסיונות שגויים הוא נפסל. אירועים שהמנהלת יצרה עם כתובת האימייל של הלקוח מקושרים אליו **רק אחרי** שאימת את הכתובת.
@@ -91,11 +93,13 @@ npm run dev                   # השרת: http://localhost:4000
 | `Users` | משתמשים (Admin/Client), Hash סיסמה, מצב אימות אימייל, טלפון וכתובת (רשות) | 1 משתמש ← הרבה אירועים |
 | `Events` | האירועים | `userId → Users.id` (אופציונלי, SET NULL), `packageId → Packages.id` (חובה, RESTRICT) |
 | `EventPhotos` | תמונות אירוע | `eventId → Events.id` (CASCADE) |
-| `Packages` | 3 חבילות | 1 חבילה ← הרבה אירועים |
+| `Packages` | המחירון: חבילות כלליות (`eventType = NULL`) וחבילות לפי סוג אירוע, עם `isActive` (ארכיון) ו־`sortOrder` | 1 חבילה ← הרבה אירועים |
 | `GalleryItems` | גלריה ציבורית | – |
 
-- **אינדקסים:** `eventDate`, `status`, `eventType`, `packageId`, `userId`, `clientEmail`, `clientName`, `eventName`, `category`.
-- **אילוצי CHECK:** `guestCount > 0`, `budget >= 0`, `price >= 0`, אימייל באותיות קטנות, שמות לא ריקים, וכתובת שאינה רווחים בלבד.
+- **אינדקסים:** `eventDate`, `status`, `eventType`, `packageId`, `userId`, `clientEmail`, `clientName`, `eventName`, `category`, ובחבילות `(eventType, isActive)`.
+- **ייחודיות שם חבילה:** בתוך אותו סוג אירוע (`eventType, name`), ובין החבילות הכלליות – באינדקס ייחודי חלקי `Packages_general_name_key` שנוצר ב־Migration (Prisma לא מתארת אותו ב־schema; יש לוודא שהוא לא מוסר ב־Migrations עתידיים).
+- **אילוצי CHECK:** `guestCount > 0`, `budget >= 0`, `price >= 0`, `sortOrder >= 0`, אימייל באותיות קטנות, שמות לא ריקים, וכתובת שאינה רווחים בלבד.
+- **`budget` באירוע** הוא תקציב העיצוב של האירוע, ואינו מחיר החבילה.
 
 פקודות שימושיות: `npm run db:migrate` (Migration חדש בפיתוח), `npm run db:studio` (צפייה בנתונים), `npm run db:reset` (איפוס מלא בפיתוח).
 
@@ -113,7 +117,7 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 
 דוח הבדיקות האחרון: [docs/TEST-REPORT.md](docs/TEST-REPORT.md).
 
-## רשימת Endpoints (21)
+## רשימת Endpoints (25)
 
 הבסיס הוא `/api`. התיעוד המלא נמצא ב־Swagger (`/api-docs`, או בקיצור `/docs`) ובקובץ `docs/openapi.json`.
 
@@ -124,7 +128,7 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 | 3 | GET | `/api/auth/me` | מחובר |
 | 4 | POST | `/api/auth/verify-email` | Guest |
 | 5 | POST | `/api/auth/resend-code` | Guest |
-| 6 | GET | `/api/packages` | Guest |
+| 6 | GET | `/api/packages?eventType=` | Guest |
 | 7 | GET | `/api/gallery?category=&page=&limit=` | Guest |
 | 8 | POST | `/api/gallery` | Admin |
 | 9 | DELETE | `/api/gallery/:id` | Admin |
@@ -140,8 +144,12 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 | 19 | GET | `/api/health` | Guest |
 | 20 | POST | `/api/auth/google` | Guest |
 | 21 | PATCH | `/api/auth/me` | מחובר |
+| 22 | POST | `/api/packages` | Admin |
+| 23 | PUT | `/api/packages/:id` | Admin |
+| 24 | DELETE | `/api/packages/:id` (ארכיון) | Admin |
+| 25 | GET | `/api/admin/packages?eventType=&isActive=` | Admin |
 
-17 הפעולות מהאפיון, ועוד 2 פעולות לאימות האימייל (מספרים 4 ו־5), התחברות עם Google (20) ועריכת פרופיל (21).
+17 הפעולות מהאפיון, ועוד 2 פעולות לאימות האימייל (מספרים 4 ו־5), התחברות עם Google (20), עריכת פרופיל (21) וניהול המחירון (22–25).
 
 **התנתקות:** השרת עובד עם JWT בלי מצב (Stateless), ולכן אין Endpoint ל־Logout. הלקוח מוחק את ה־Token מ־`localStorage` ומאפס את המשתמש ב־Context. Token שפג תוקפו (`JWT_EXPIRES_IN`, ברירת מחדל שעתיים) או שהמשתמש שלו נמחק מקבל 401.
 

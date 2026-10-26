@@ -18,7 +18,11 @@
     },
     {
       "name": "Packages",
-      "description": "חבילות עיצוב"
+      "description": "מחירון וחבילות עיצוב לפי סוג אירוע"
+    },
+    {
+      "name": "Admin",
+      "description": "ממשק ניהול (מנהלת בלבד)"
     },
     {
       "name": "Gallery",
@@ -380,7 +384,9 @@
           "description",
           "price",
           "features",
-          "imageUrl"
+          "imageUrl",
+          "eventType",
+          "sortOrder"
         ],
         "properties": {
           "id": {
@@ -394,7 +400,7 @@
           },
           "price": {
             "type": "number",
-            "description": "Demo price (ILS)"
+            "description": "Current list price (ILS, demo). Not stored in events – changing it never changes existing events"
           },
           "features": {
             "type": "array",
@@ -404,6 +410,20 @@
           },
           "imageUrl": {
             "type": "string"
+          },
+          "eventType": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EventType"
+              }
+            ],
+            "nullable": true,
+            "description": "null = general package that fits every event type"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Display order inside the event type"
           }
         },
         "example": {
@@ -416,7 +436,141 @@
             "התאמת צבעים",
             "אביזרים בסיסיים"
           ],
-          "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600"
+          "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600",
+          "eventType": null,
+          "sortOrder": 0
+        }
+      },
+      "AdminPackage": {
+        "description": "חבילה בממשק הניהול: כולל ארכיון ומספר ההזמנות שמשתמשות בחבילה",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Package"
+          },
+          {
+            "type": "object",
+            "required": [
+              "isActive",
+              "eventCount",
+              "createdAt",
+              "updatedAt"
+            ],
+            "properties": {
+              "isActive": {
+                "type": "boolean",
+                "description": "false = archived (hidden from the public price list)"
+              },
+              "eventCount": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many events use this package"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ],
+        "example": {
+          "id": 4,
+          "name": "יום הולדת קלאסי",
+          "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+          "price": 1500,
+          "features": [
+            "שולחן מתוקים מעוצב",
+            "קשת בלונים קטנה",
+            "שלט ברכה אישי"
+          ],
+          "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+          "eventType": "Birthday",
+          "sortOrder": 1,
+          "isActive": true,
+          "eventCount": 2,
+          "createdAt": "2026-10-27T09:00:00.000Z",
+          "updatedAt": "2026-10-27T09:30:00.000Z"
+        }
+      },
+      "PackageInput": {
+        "type": "object",
+        "description": "שדות לא מוכרים נדחים. eventType חובה בגוף הבקשה (null = חבילה כללית).",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "description",
+          "price",
+          "features",
+          "imageUrl",
+          "eventType"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50,
+            "description": "Unique inside the event type (or among general packages)"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 500
+          },
+          "price": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Up to 2 decimal places"
+          },
+          "features": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          "imageUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 500,
+            "description": "https URL"
+          },
+          "eventType": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EventType"
+              }
+            ],
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "description": "Create default: true. Update: unchanged if omitted (true restores from the archive)"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "Create default: 0. Update: unchanged if omitted"
+          }
+        },
+        "example": {
+          "name": "יום הולדת קלאסי",
+          "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+          "price": 1500,
+          "features": [
+            "שולחן מתוקים מעוצב",
+            "קשת בלונים קטנה",
+            "שלט ברכה אישי"
+          ],
+          "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+          "eventType": "Birthday",
+          "sortOrder": 1
         }
       },
       "GalleryItem": {
@@ -1475,10 +1629,21 @@
         "tags": [
           "Packages"
         ],
-        "summary": "כל חבילות העיצוב (Guest)",
+        "summary": "המחירון הציבורי – חבילות פעילות בלבד (Guest)",
+        "description": "בלי פרמטרים: כל החבילות הפעילות. עם eventType: החבילות של הסוג, ואחריהן החבילות הכלליות (eventType=null). הסדר: סוג (כלליות בסוף), sortOrder, מחיר, id. חבילות בארכיון לא מוחזרות.",
+        "parameters": [
+          {
+            "name": "eventType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/EventType"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Packages sorted by price",
+            "description": "Active packages",
             "content": {
               "application/json": {
                 "schema": {
@@ -1489,6 +1654,20 @@
                 },
                 "example": [
                   {
+                    "id": 4,
+                    "name": "יום הולדת קלאסי",
+                    "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+                    "price": 1500,
+                    "features": [
+                      "שולחן מתוקים מעוצב",
+                      "קשת בלונים קטנה",
+                      "שלט ברכה אישי"
+                    ],
+                    "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+                    "eventType": "Birthday",
+                    "sortOrder": 1
+                  },
+                  {
                     "id": 1,
                     "name": "Basic",
                     "description": "עיצוב שולחן מרכזי, צבעים ואביזרים בסיסיים",
@@ -1498,9 +1677,543 @@
                       "התאמת צבעים",
                       "אביזרים בסיסיים"
                     ],
-                    "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600"
+                    "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600",
+                    "eventType": null,
+                    "sortOrder": 0
                   }
                 ]
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "יצירת חבילה (Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPackage"
+                },
+                "example": {
+                  "id": 4,
+                  "name": "יום הולדת קלאסי",
+                  "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+                  "price": 1500,
+                  "features": [
+                    "שולחן מתוקים מעוצב",
+                    "קשת בלונים קטנה",
+                    "שלט ברכה אישי"
+                  ],
+                  "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+                  "eventType": "Birthday",
+                  "sortOrder": 1,
+                  "isActive": true,
+                  "eventCount": 0,
+                  "createdAt": "2026-10-27T09:00:00.000Z",
+                  "updatedAt": "2026-10-27T09:30:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name already used in this event type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "A package with this name already exists for this event type"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/packages/{id}": {
+      "put": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "עריכת חבילה – פרטים, מחיר, סוג, סדר, ארכיון (Admin)",
+        "description": "החלפה מלאה (כל שדות החובה). שינוי מחיר לא משנה הזמנות קיימות. שינוי eventType מותר רק אם לא נוצר חוסר התאמה: מעבר לכללית (null) תמיד מותר, ומעבר לסוג מסוים רק אם כל ההזמנות של החבילה מאותו סוג – אחרת 409. isActive=true מחזיר מהארכיון.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Package id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPackage"
+                },
+                "example": {
+                  "id": 4,
+                  "name": "יום הולדת קלאסי",
+                  "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+                  "price": 1500,
+                  "features": [
+                    "שולחן מתוקים מעוצב",
+                    "קשת בלונים קטנה",
+                    "שלט ברכה אישי"
+                  ],
+                  "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+                  "eventType": "Birthday",
+                  "sortOrder": 1,
+                  "isActive": true,
+                  "eventCount": 2,
+                  "createdAt": "2026-10-27T09:00:00.000Z",
+                  "updatedAt": "2026-10-27T09:30:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Package not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Package not found"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate name, or the new event type does not match existing events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "Cannot change the event type: 1 existing event(s) of another type use this package",
+                    "details": {
+                      "conflictingEvents": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "העברת חבילה לארכיון – ללא מחיקה פיזית (Admin)",
+        "description": "החבילה מוסתרת מהמחירון הציבורי ואי אפשר לבחור בה להזמנות חדשות. הזמנות קיימות ממשיכות להפנות אליה. החזרה מהארכיון: PUT עם isActive=true.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Package id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Archived – הועברה לארכיון (ללא תוכן בתשובה)"
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Package not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Package not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/packages": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "כל החבילות לניהול, כולל ארכיון ומספר הזמנות (Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Birthday",
+                "BatMitzvah",
+                "Brit",
+                "Corporate",
+                "Private",
+                "general"
+              ]
+            },
+            "description": "סוג אירוע, או general לחבילות הכלליות בלבד"
+          },
+          {
+            "name": "isActive",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All packages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminPackage"
+                  }
+                },
+                "example": [
+                  {
+                    "id": 4,
+                    "name": "יום הולדת קלאסי",
+                    "description": "שולחן מתוקים ובלונים בצבעי האירוע",
+                    "price": 1500,
+                    "features": [
+                      "שולחן מתוקים מעוצב",
+                      "קשת בלונים קטנה",
+                      "שלט ברכה אישי"
+                    ],
+                    "imageUrl": "https://picsum.photos/seed/eventstyle-type-1/800/600",
+                    "eventType": "Birthday",
+                    "sortOrder": 1,
+                    "isActive": true,
+                    "eventCount": 2,
+                    "createdAt": "2026-10-27T09:00:00.000Z",
+                    "updatedAt": "2026-10-27T09:30:00.000Z"
+                  }
+                ]
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
               }
             }
           }
@@ -2110,7 +2823,7 @@
           "Events"
         ],
         "summary": "יצירת אירוע (Admin)",
-        "description": "אם קיים לקוח **מאומת** עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שהלקוח יירשם ויאמת.",
+        "description": "אם קיים לקוח **מאומת** עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שהלקוח יירשם ויאמת.\n\n**חבילה:** חייבת להיות פעילה, ומסוג האירוע או כללית (eventType=null). אחרת 400 על השדה packageId.",
         "security": [
           {
             "bearerAuth": []
@@ -2498,7 +3211,7 @@
           "Events"
         ],
         "summary": "עריכת אירוע – החלפה מלאה (Admin)",
-        "description": "יש לשלוח את כל שדות החובה. status אופציונלי (אם לא נשלח – לא משתנה). הקישור ללקוח מחושב מחדש לפי clientEmail.",
+        "description": "יש לשלוח את כל שדות החובה. status אופציונלי (אם לא נשלח – לא משתנה). הקישור ללקוח מחושב מחדש לפי clientEmail.\n\n**חבילה:** מסוג האירוע או כללית – גם כשמשנים רק את eventType. חבילה בארכיון מותרת רק אם האירוע כבר משויך אליה.",
         "security": [
           {
             "bearerAuth": []

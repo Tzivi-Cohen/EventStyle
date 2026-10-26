@@ -4,6 +4,7 @@ import { HttpError } from '../errors/HttpError';
 import { fromDateOnly, toEventDto, toPhotoDto } from '../utils/mappers';
 import { toPage, toSkipTake } from '../utils/pagination';
 import { getImageStorage, removeImagesSafely, type StoredImage } from './storage/imageStorage';
+import { assertPackageAllowedForEvent } from './packages.service';
 import type { EventBodyInput, EventListQuery } from '../schemas/event.schema';
 import type { PaginationQuery } from '../schemas/common.schema';
 
@@ -27,13 +28,6 @@ async function resolveVerifiedClientId(clientEmail: string): Promise<number | nu
     select: { id: true },
   });
   return user?.id ?? null;
-}
-
-async function assertPackageExists(packageId: number) {
-  const exists = await prisma.package.findUnique({ where: { id: packageId }, select: { id: true } });
-  if (!exists) {
-    throw HttpError.badRequest('Validation failed', [{ field: 'packageId', message: 'Package does not exist' }]);
-  }
 }
 
 async function findEventOr404(id: number) {
@@ -119,30 +113,36 @@ export async function getEvent(id: number, user: Express.AuthUser) {
   return toEventDto(event, isAdmin);
 }
 
+/**
+ * יצירת אירוע: החבילה חייבת להיות פעילה, ומסוג האירוע או כללית.
+ * הבדיקה והיצירה באותו Transaction, עם נעילת שורת החבילה (ראו assertPackageAllowedForEvent).
+ */
 export async function createEvent(input: EventBodyInput) {
-  await assertPackageExists(input.packageId);
-  const event = await prisma.event.create({
-    data: {
-      ...toEventData(input),
-      status: input.status ?? 'New',
-      userId: await resolveVerifiedClientId(input.clientEmail),
-    },
-    include: detailsInclude,
+  const userId = await resolveVerifiedClientId(input.clientEmail);
+  const event = await prisma.$transaction(async (tx) => {
+    await assertPackageAllowedForEvent(tx, input.packageId, input.eventType);
+    return tx.event.create({
+      data: { ...toEventData(input), status: input.status ?? 'New', userId },
+      include: detailsInclude,
+    });
   });
   return toEventDto(event, true);
 }
 
+/**
+ * עריכת אירוע: אותם כללים כמו ביצירה. התאמת הסוג נבדקת תמיד – גם כשמשנים רק את eventType של האירוע.
+ * חבילה שעברה לארכיון מותרת רק אם האירוע כבר משויך אליה.
+ */
 export async function updateEvent(id: number, input: EventBodyInput) {
   const existing = await findEventOr404(id);
-  await assertPackageExists(input.packageId);
-  const event = await prisma.event.update({
-    where: { id },
-    data: {
-      ...toEventData(input),
-      status: input.status ?? existing.status,
-      userId: await resolveVerifiedClientId(input.clientEmail),
-    },
-    include: detailsInclude,
+  const userId = await resolveVerifiedClientId(input.clientEmail);
+  const event = await prisma.$transaction(async (tx) => {
+    await assertPackageAllowedForEvent(tx, input.packageId, input.eventType, existing.packageId);
+    return tx.event.update({
+      where: { id },
+      data: { ...toEventData(input), status: input.status ?? existing.status, userId },
+      include: detailsInclude,
+    });
   });
   return toEventDto(event, true);
 }
