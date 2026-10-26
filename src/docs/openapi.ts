@@ -2,6 +2,7 @@ import { DEFAULT_PAGE_SIZE, EVENT_STATUSES, EVENT_TYPES, MAX_PAGE_SIZE } from '.
 import { SORT_FIELDS } from '../schemas/event.schema';
 import { ALLOWED_MIME_TYPES, MAX_FILES_PER_REQUEST, MAX_FILE_SIZE_MB } from '../middleware/upload';
 import { VERIFICATION } from '../config/verification';
+import { ADDRESS_MAX_LENGTH } from '../schemas/auth.schema';
 
 /**
  * מסמך OpenAPI 3 של EventStyle.
@@ -86,6 +87,7 @@ const exampleUser = {
   fullName: 'נועה לוי',
   email: 'noa.levi@example.com',
   phone: '050-1234567',
+  address: null,
   role: 'Client',
   emailVerified: true,
   googleLinked: false,
@@ -225,12 +227,18 @@ export const openApiDocument = {
       EventStatus: { type: 'string', enum: [...EVENT_STATUSES], description: 'New=חדש, Planning=בתכנון, Preparing=בהכנות, Ready=מוכן, Completed=הושלם' },
       User: {
         type: 'object',
-        required: ['id', 'fullName', 'email', 'phone', 'role', 'emailVerified', 'googleLinked', 'createdAt'],
+        required: ['id', 'fullName', 'email', 'phone', 'address', 'role', 'emailVerified', 'googleLinked', 'createdAt'],
         properties: {
           id: { type: 'integer' },
           fullName: { type: 'string' },
           email: { type: 'string', format: 'email', description: 'Read-only (cannot be changed via the API)' },
           phone: { type: 'string', nullable: true, description: 'null for users who signed up with Google and did not add a phone yet' },
+          address: {
+            type: 'string',
+            nullable: true,
+            maxLength: ADDRESS_MAX_LENGTH,
+            description: 'Optional, set only via PATCH /api/auth/me. null = no address',
+          },
           role: ref('Role'),
           emailVerified: { type: 'boolean' },
           googleLinked: { type: 'boolean', description: 'true if the account can sign in with Google' },
@@ -286,8 +294,14 @@ export const openApiDocument = {
         properties: {
           fullName: { type: 'string', minLength: 2, maxLength: 100 },
           phone: { type: 'string', pattern: '^\\+?[0-9][0-9\\s-]{6,18}$' },
+          address: {
+            type: 'string',
+            nullable: true,
+            maxLength: ADDRESS_MAX_LENGTH,
+            description: `Up to ${ADDRESS_MAX_LENGTH} characters (trimmed). null, "" or spaces only delete the address`,
+          },
         },
-        example: { fullName: 'נועה לוי-כהן', phone: '052-7654321' },
+        example: { fullName: 'נועה לוי-כהן', phone: '052-7654321', address: 'רחוב הרצל 10, תל אביב' },
       },
       Pagination: {
         type: 'object',
@@ -602,7 +616,8 @@ export const openApiDocument = {
         tags: ['Auth'],
         summary: 'עריכת הפרופיל של המשתמש המחובר (Client / Admin)',
         description:
-          'אפשר לעדכן רק fullName ו-phone, ורק של המשתמש המחובר (לפי ה-Token). ' +
+          'אפשר לעדכן רק fullName, phone ו-address, ורק של המשתמש המחובר (לפי ה-Token). שדה שלא נשלח לא משתנה. ' +
+          'address=null (או מחרוזת ריקה) מוחק את הכתובת. ' +
           'אימייל, תפקיד, חיבור Google ושדות אימות אינם ניתנים לשינוי – שליחתם מחזירה 400.',
         security: bearer,
         requestBody: { required: true, content: jsonContent(ref('UpdateProfileRequest')) },
@@ -611,7 +626,7 @@ export const openApiDocument = {
             description: 'Updated user',
             content: jsonContent(
               { type: 'object', properties: { user: ref('User') } },
-              { user: { ...exampleUser, fullName: 'נועה לוי-כהן', phone: '052-7654321' } },
+              { user: { ...exampleUser, fullName: 'נועה לוי-כהן', phone: '052-7654321', address: 'רחוב הרצל 10, תל אביב' } },
             ),
           },
           400: R.validation,

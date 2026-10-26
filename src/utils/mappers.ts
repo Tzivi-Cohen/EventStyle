@@ -16,13 +16,17 @@ export function fromDateOnly(value: string): Date {
 const decimalToNumber = (value: Prisma.Decimal): number => value.toNumber();
 
 export function toPublicUser(
-  user: Pick<User, 'id' | 'fullName' | 'email' | 'phone' | 'role' | 'emailVerified' | 'googleId' | 'createdAt'>,
+  user: Pick<
+    User,
+    'id' | 'fullName' | 'email' | 'phone' | 'address' | 'role' | 'emailVerified' | 'googleId' | 'createdAt'
+  >,
 ) {
   return {
     id: user.id,
     fullName: user.fullName,
     email: user.email,
     phone: user.phone,
+    address: user.address,
     role: user.role,
     emailVerified: user.emailVerified,
     // רק האם החשבון מקושר ל-Google – המזהה עצמו לא נשלח

@@ -38,6 +38,8 @@ model User {
   email        String   @unique @db.VarChar(254)
   // רשות: משתמש שנרשם דרך Google לא מוסר טלפון (אפשר להוסיף בעריכת פרופיל)
   phone        String?  @db.VarChar(20)
+  // רשות: כתובת שהמשתמש מוסיף בעריכת הפרופיל בלבד (null = אין כתובת)
+  address      String?  @db.VarChar(200)
   // רשות: משתמש שנרשם דרך Google בלבד אין לו סיסמה מקומית
   passwordHash String?  @db.VarChar(100)
   // מזהה Google היציב (sub מתוך ה-ID Token). לא נשמרים טוקנים של Google

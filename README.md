@@ -88,14 +88,14 @@ npm run dev                   # השרת: http://localhost:4000
 
 | טבלה | תוכן | קשרים |
 |---|---|---|
-| `Users` | משתמשים (Admin/Client), Hash סיסמה, מצב אימות אימייל | 1 משתמש ← הרבה אירועים |
+| `Users` | משתמשים (Admin/Client), Hash סיסמה, מצב אימות אימייל, טלפון וכתובת (רשות) | 1 משתמש ← הרבה אירועים |
 | `Events` | האירועים | `userId → Users.id` (אופציונלי, SET NULL), `packageId → Packages.id` (חובה, RESTRICT) |
 | `EventPhotos` | תמונות אירוע | `eventId → Events.id` (CASCADE) |
 | `Packages` | 3 חבילות | 1 חבילה ← הרבה אירועים |
 | `GalleryItems` | גלריה ציבורית | – |
 
 - **אינדקסים:** `eventDate`, `status`, `eventType`, `packageId`, `userId`, `clientEmail`, `clientName`, `eventName`, `category`.
-- **אילוצי CHECK:** `guestCount > 0`, `budget >= 0`, `price >= 0`, אימייל באותיות קטנות, ושמות לא ריקים.
+- **אילוצי CHECK:** `guestCount > 0`, `budget >= 0`, `price >= 0`, אימייל באותיות קטנות, שמות לא ריקים, וכתובת שאינה רווחים בלבד.
 
 פקודות שימושיות: `npm run db:migrate` (Migration חדש בפיתוח), `npm run db:studio` (צפייה בנתונים), `npm run db:reset` (איפוס מלא בפיתוח).
 

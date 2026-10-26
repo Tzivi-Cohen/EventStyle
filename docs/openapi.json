@@ -127,6 +127,7 @@
           "fullName",
           "email",
           "phone",
+          "address",
           "role",
           "emailVerified",
           "googleLinked",
@@ -149,6 +150,12 @@
             "nullable": true,
             "description": "null for users who signed up with Google and did not add a phone yet"
           },
+          "address": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Optional, set only via PATCH /api/auth/me. null = no address"
+          },
           "role": {
             "$ref": "#/components/schemas/Role"
           },
@@ -169,6 +176,7 @@
           "fullName": "נועה לוי",
           "email": "noa.levi@example.com",
           "phone": "050-1234567",
+          "address": null,
           "role": "Client",
           "emailVerified": true,
           "googleLinked": false,
@@ -300,11 +308,18 @@
           "phone": {
             "type": "string",
             "pattern": "^\\+?[0-9][0-9\\s-]{6,18}$"
+          },
+          "address": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Up to 200 characters (trimmed). null, \"\" or spaces only delete the address"
           }
         },
         "example": {
           "fullName": "נועה לוי-כהן",
-          "phone": "052-7654321"
+          "phone": "052-7654321",
+          "address": "רחוב הרצל 10, תל אביב"
         }
       },
       "Pagination": {
@@ -788,6 +803,7 @@
                     "fullName": "נועה לוי",
                     "email": "noa.levi@example.com",
                     "phone": "050-1234567",
+                    "address": null,
                     "role": "Client",
                     "emailVerified": false,
                     "googleLinked": false,
@@ -885,6 +901,7 @@
                     "fullName": "נועה לוי",
                     "email": "noa.levi@example.com",
                     "phone": "050-1234567",
+                    "address": null,
                     "role": "Client",
                     "emailVerified": true,
                     "googleLinked": false,
@@ -995,6 +1012,7 @@
                     "fullName": "נועה לוי",
                     "email": "noa.levi@example.com",
                     "phone": null,
+                    "address": null,
                     "role": "Client",
                     "emailVerified": true,
                     "googleLinked": true,
@@ -1159,6 +1177,7 @@
                     "fullName": "נועה לוי",
                     "email": "noa.levi@example.com",
                     "phone": "050-1234567",
+                    "address": null,
                     "role": "Client",
                     "emailVerified": true,
                     "googleLinked": false,
@@ -1332,6 +1351,7 @@
                     "fullName": "נועה לוי",
                     "email": "noa.levi@example.com",
                     "phone": "050-1234567",
+                    "address": null,
                     "role": "Client",
                     "emailVerified": true,
                     "googleLinked": false,
@@ -1364,7 +1384,7 @@
           "Auth"
         ],
         "summary": "עריכת הפרופיל של המשתמש המחובר (Client / Admin)",
-        "description": "אפשר לעדכן רק fullName ו-phone, ורק של המשתמש המחובר (לפי ה-Token). אימייל, תפקיד, חיבור Google ושדות אימות אינם ניתנים לשינוי – שליחתם מחזירה 400.",
+        "description": "אפשר לעדכן רק fullName, phone ו-address, ורק של המשתמש המחובר (לפי ה-Token). שדה שלא נשלח לא משתנה. address=null (או מחרוזת ריקה) מוחק את הכתובת. אימייל, תפקיד, חיבור Google ושדות אימות אינם ניתנים לשינוי – שליחתם מחזירה 400.",
         "security": [
           {
             "bearerAuth": []
@@ -1399,6 +1419,7 @@
                     "fullName": "נועה לוי-כהן",
                     "email": "noa.levi@example.com",
                     "phone": "052-7654321",
+                    "address": "רחוב הרצל 10, תל אביב",
                     "role": "Client",
                     "emailVerified": true,
                     "googleLinked": false,

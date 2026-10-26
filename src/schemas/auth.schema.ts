@@ -23,17 +23,28 @@ export const googleLoginSchema = z.strictObject({
   idToken: z.string({ error: 'idToken is required' }).trim().min(1, 'idToken is required').max(4096),
 });
 
+export const ADDRESS_MAX_LENGTH = 200;
+
+/** כתובת: עד 200 תווים אחרי הסרת רווחים. מחרוזת ריקה או null מוחקות את הכתובת (נשמר null) */
+const addressSchema = z
+  .string({ error: 'Address must be a string or null' })
+  .trim()
+  .max(ADDRESS_MAX_LENGTH, `Address must be at most ${ADDRESS_MAX_LENGTH} characters`)
+  .nullable()
+  .transform((value) => (value ? value : null));
+
 /**
- * עריכת פרופיל: רק שם וטלפון.
+ * עריכת פרופיל: רק שם, טלפון וכתובת.
  * strictObject – ניסיון לשלוח role, email, googleId, emailVerified, id וכו' נדחה עם 400.
  */
 export const updateProfileSchema = z
   .strictObject({
     fullName: z.string().trim().min(2, 'Full name must be at least 2 characters').max(100).optional(),
     phone: phoneSchema.optional(),
+    address: addressSchema.optional(),
   })
-  .refine((data) => data.fullName !== undefined || data.phone !== undefined, {
-    error: 'Send at least one field to update: fullName or phone',
+  .refine((data) => data.fullName !== undefined || data.phone !== undefined || data.address !== undefined, {
+    error: 'Send at least one field to update: fullName, phone or address',
   });
 
 export const loginSchema = z.strictObject({

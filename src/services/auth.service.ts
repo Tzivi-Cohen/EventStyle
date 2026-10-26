@@ -165,7 +165,8 @@ export async function getCurrentUser(userId: number) {
 }
 
 /**
- * עריכת פרופיל: רק שם וטלפון, ורק של המשתמש המחובר (המזהה מגיע מה-Token, לא מהבקשה).
+ * עריכת פרופיל: רק שם, טלפון וכתובת, ורק של המשתמש המחובר (המזהה מגיע מה-Token, לא מהבקשה).
+ * שדה שלא נשלח לא משתנה. address=null מוחק את הכתובת.
  * אימייל, תפקיד, Google ושדות אימות לא ניתנים לשינוי כאן.
  */
 export async function updateProfile(userId: number, input: UpdateProfileInput) {
@@ -174,6 +175,7 @@ export async function updateProfile(userId: number, input: UpdateProfileInput) {
     data: {
       ...(input.fullName !== undefined && { fullName: input.fullName }),
       ...(input.phone !== undefined && { phone: input.phone }),
+      ...(input.address !== undefined && { address: input.address }),
     },
   });
   return { user: toPublicUser(user) };

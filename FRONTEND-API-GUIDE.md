@@ -257,10 +257,11 @@ POST /auth/google { idToken } ──► השרת מאמת את הטוקן מול
 | פעולה | Endpoint |
 |---|---|
 | צפייה | `GET /auth/me` |
-| עריכה | `PATCH /auth/me` עם `fullName` ו/או `phone` |
+| עריכה | `PATCH /auth/me` עם `fullName`, `phone` ו/או `address` |
 
 **כללים:**
-- **מה אפשר לערוך:** רק **שם** ו**טלפון**, ורק של המשתמש המחובר. המזהה נלקח מה־Token, ואין דרך לבחור משתמש אחר.
+- **מה אפשר לערוך:** רק **שם**, **טלפון** ו**כתובת**, ורק של המשתמש המחובר. המזהה נלקח מה־Token, ואין דרך לבחור משתמש אחר.
+- **כתובת (`address`):** אופציונלית, עד 200 תווים. נוספת **רק** בעריכת הפרופיל ולא בהרשמה. `null`, `""` או רווחים בלבד מוחקים אותה. משתמשת שלא הוסיפה כתובת מקבלת `address: null`.
 - **שדות לקריאה בלבד:** אימייל, תפקיד, חיבור ל־Google ומצב האימות **אינם ניתנים לשינוי**. שליחתם תחזיר `400`.
   - **אימייל:** הציגי אותו בטופס כשדה לקריאה בלבד (`readOnly`).
   - **`googleLinked`:** אפשר להציג אותו כתג "מחובר עם Google".
@@ -314,6 +315,7 @@ export interface User {
   fullName: string;
   email: string;          // תמיד באותיות קטנות. לקריאה בלבד
   phone: string | null;   // null אצל משתמש Google שעוד לא הוסיף טלפון
+  address: string | null; // null כשלא הוגדרה כתובת
   role: Role;
   emailVerified: boolean;
   googleLinked: boolean;  // האם אפשר להתחבר לחשבון עם Google
@@ -334,6 +336,7 @@ export interface GoogleAuthResult extends AuthResult {
 export interface ProfileUpdate {
   fullName?: string;
   phone?: string;
+  address?: string | null; // null או "" מוחקים את הכתובת
 }
 
 /** מידע החלוקה לעמודים שמוחזר בכל רשימה */
@@ -539,6 +542,7 @@ export interface ApiErrorBody {
     "fullName": "נועה לוי",
     "email": "noa.levi@example.com",
     "phone": "050-1234567",
+    "address": null,
     "role": "Client",
     "emailVerified": false,
     "googleLinked": false,
@@ -584,6 +588,7 @@ export interface ApiErrorBody {
     "fullName": "נועה לוי",
     "email": "noa.levi@example.com",
     "phone": "050-1234567",
+    "address": null,
     "role": "Client",
     "emailVerified": true,
     "googleLinked": false,
@@ -657,6 +662,7 @@ export interface ApiErrorBody {
     "fullName": "מנהלת הסטודיו",
     "email": "admin@eventstyle.example",
     "phone": "050-0000000",
+    "address": null,
     "role": "Admin",
     "emailVerified": true,
     "googleLinked": false,
@@ -691,6 +697,7 @@ export interface ApiErrorBody {
     "fullName": "נועה לוי",
     "email": "noa.levi@example.com",
     "phone": "050-1234567",
+    "address": null,
     "role": "Client",
     "emailVerified": true,
     "googleLinked": false,
@@ -730,6 +737,7 @@ export interface ApiErrorBody {
     "fullName": "Noa Levi",
     "email": "noa.levi@gmail.com",
     "phone": null,
+    "address": null,
     "role": "Client",
     "emailVerified": true,
     "googleLinked": true,
@@ -768,11 +776,17 @@ export interface ApiErrorBody {
 |---|---|---|---|
 | `fullName` | string | ✘ | 2–100 תווים. רווחים בהתחלה ובסוף מוסרים |
 | `phone` | string | ✘ | אותם כללים כמו בהרשמה: 7–19 תווים, ספרות, רווחים ומקפים, `+` בהתחלה. **אי אפשר למחוק** טלפון (`null` נדחה) |
+| `address` | string \| null | ✘ | עד 200 תווים, רווחים בהתחלה ובסוף מוסרים. **מחיקה:** `null`, `""` או רווחים בלבד |
 
 **שדות אסורים:** `email`, `role`, `googleId`, `emailVerified`, `password`, `id` וכל שדה אחר. שליחת אחד מהם מחזירה `400`, ושום דבר לא משתנה.
 
 ```json
-{ "fullName": "נועה לוי-כהן", "phone": "052-7654321" }
+{ "fullName": "נועה לוי-כהן", "phone": "052-7654321", "address": "רחוב הרצל 10, תל אביב" }
+```
+
+מחיקת כתובת:
+```json
+{ "address": null }
 ```
 
 **Response `200`:**
@@ -783,6 +797,7 @@ export interface ApiErrorBody {
     "fullName": "נועה לוי-כהן",
     "email": "noa.levi@example.com",
     "phone": "052-7654321",
+    "address": "רחוב הרצל 10, תל אביב",
     "role": "Client",
     "emailVerified": true,
     "googleLinked": false,
@@ -794,7 +809,7 @@ export interface ApiErrorBody {
 **שגיאות:**
 | HTTP | code | מתי |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | גוף ריק (`Send at least one field to update: fullName or phone`), ערך לא תקין, או שדה אסור (`Unrecognized keys: "email"`) |
+| 400 | `VALIDATION_ERROR` | גוף ריק (`Send at least one field to update: fullName, phone or address`), ערך לא תקין (למשל `Address must be at most 200 characters` ב־`field: "address"`), או שדה אסור (`Unrecognized keys: "email"`) |
 | 401 | `UNAUTHORIZED` | לא מחובר |
 
 ---
@@ -1938,7 +1953,7 @@ function AdminEventsTable() {
 | **אימות אימייל** `/verify-email` | הזנת קוד בן 6 ספרות | `POST /auth/verify-email`, `POST /auth/resend-code` | אימייל, שדה קוד, ניסיונות שנותרו, ספירה לאחור | אימות, שליחה חוזרת | 🌐 (אחרי הרשמה, התחברות, או התחברות Google עם כתובת שאינה Gmail) |
 | **התחברות** `/login` | כניסה למערכת | `POST /auth/login`, `POST /auth/google` | טופס: `email`, `password`, וכפתור "המשך עם Google" | התחברות עם סיסמה או עם Google. אם `emailVerified=false`, מעבר לאימות | 🌐 |
 | **טעינת האפליקציה** (ללא מסך) | שחזור התחברות אחרי רענון | `GET /auth/me` | – | – | Token שמור |
-| **הפרופיל שלי** `/profile` | צפייה בפרטים ועריכתם | `GET /auth/me`, `PATCH /auth/me` | `fullName`, `phone` (ניתנים לעריכה), `email` (לקריאה בלבד), `role`, `emailVerified`, `googleLinked` | שמירת שם וטלפון | 👤 (Client או Admin) |
+| **הפרופיל שלי** `/profile` | צפייה בפרטים ועריכתם | `GET /auth/me`, `PATCH /auth/me` | `fullName`, `phone`, `address` (ניתנים לעריכה), `email` (לקריאה בלבד), `role`, `emailVerified`, `googleLinked` | שמירת שם, טלפון וכתובת, ומחיקת כתובת | 👤 (Client או Admin) |
 | **האירועים שלי** `/my-events` | הלקוחה רואה את האירועים שלה | `GET /events/my?page=...&limit=...` | `eventName`, `eventDate`, `eventType`, `status`, `package.name`, `photoCount` + פקדי עמודים | מעבר לפרטי אירוע, מעבר בין עמודים | 👤 |
 | **פרטי האירוע שלי** `/my-events/:id` | סטטוס ההכנות ותמונות | `GET /events/:id` | כל פרטי האירוע (בלי `notes`), `status` כפס התקדמות, `photos[]` | צפייה בתמונות | 👤 בעלת האירוע |
 | **ניהול אירועים** `/admin/events` | טבלת כל האירועים | `GET /events?...&page=...&limit=...`, `GET /packages` (למסנן החבילה), `PATCH /events/:id/status`, `DELETE /events/:id` | טבלה: שם אירוע, לקוח, תאריך, סוג, חבילה, תקציב, סטטוס, מספר תמונות + "עמוד X מתוך Y" ו־`totalItems` | חיפוש, סינון (סוג, סטטוס, חבילה), מיון (תאריך, תקציב, שם לקוח), מעבר בין עמודים, שינוי סטטוס, מחיקה, מעבר ליצירה או עריכה | 👑 |
