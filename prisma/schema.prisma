@@ -1,0 +1,133 @@
+// EventStyle – מבנה מסד הנתונים (PostgreSQL + Prisma)
+// חמש טבלאות: Users, Events, EventPhotos, Packages, GalleryItems
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  Admin
+  Client
+}
+
+enum EventType {
+  Birthday
+  BatMitzvah
+  Brit
+  Corporate
+  Private
+}
+
+enum EventStatus {
+  New
+  Planning
+  Preparing
+  Ready
+  Completed
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  fullName     String   @db.VarChar(100)
+  // נשמר תמיד באותיות קטנות וללא רווחים
+  email        String   @unique @db.VarChar(254)
+  // רשות: משתמש שנרשם דרך Google לא מוסר טלפון (אפשר להוסיף בעריכת פרופיל)
+  phone        String?  @db.VarChar(20)
+  // רשות: משתמש שנרשם דרך Google בלבד אין לו סיסמה מקומית
+  passwordHash String?  @db.VarChar(100)
+  // מזהה Google היציב (sub מתוך ה-ID Token). לא נשמרים טוקנים של Google
+  googleId     String?  @unique @db.VarChar(255)
+  role         Role     @default(Client)
+  createdAt    DateTime @default(now())
+
+  // אימות כתובת אימייל בקוד חד־פעמי (נשמר רק Hash של הקוד)
+  emailVerified             Boolean   @default(false)
+  verificationCodeHash      String?   @db.VarChar(64)
+  verificationCodeExpiresAt DateTime?
+  verificationAttempts      Int       @default(0)
+  verificationLastSentAt    DateTime?
+  verificationSendCount     Int       @default(0)
+  verificationWindowStart   DateTime?
+
+  events Event[]
+
+  @@map("Users")
+}
+
+model Package {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  description String   @db.VarChar(500)
+  price       Decimal  @db.Decimal(10, 2)
+  features    String[]
+  imageUrl    String   @db.VarChar(500)
+
+  events Event[]
+
+  @@map("Packages")
+}
+
+model Event {
+  id            Int         @id @default(autoincrement())
+  eventName     String      @db.VarChar(120)
+  clientName    String      @db.VarChar(100)
+  clientEmail   String      @db.VarChar(254)
+  eventType     EventType
+  eventDate     DateTime    @db.Date
+  location      String      @db.VarChar(200)
+  packageId     Int
+  themeColor    String      @db.VarChar(30)
+  guestCount    Int
+  budget        Decimal     @db.Decimal(12, 2)
+  status        EventStatus @default(New)
+  coverImageUrl String?     @db.VarChar(500)
+  notes         String?     @db.VarChar(2000)
+  userId        Int?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  package Package      @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  user    User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  photos  EventPhoto[]
+
+  @@index([eventDate])
+  @@index([status])
+  @@index([eventType])
+  @@index([packageId])
+  @@index([userId])
+  @@index([clientEmail])
+  @@index([clientName])
+  @@index([eventName])
+  @@map("Events")
+}
+
+model EventPhoto {
+  id        Int      @id @default(autoincrement())
+  eventId   Int
+  url       String   @db.VarChar(500)
+  publicId  String?  @db.VarChar(255)
+  createdAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@map("EventPhotos")
+}
+
+model GalleryItem {
+  id        Int       @id @default(autoincrement())
+  title     String    @db.VarChar(120)
+  category  EventType
+  url       String    @db.VarChar(500)
+  publicId  String?   @db.VarChar(255)
+  createdAt DateTime  @default(now())
+
+  @@index([category])
+  @@index([createdAt])
+  @@map("GalleryItems")
+}

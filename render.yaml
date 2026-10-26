@@ -1,0 +1,47 @@
+# ============================================================
+# EventStyle – הגדרת פריסה ל-Render (Blueprint)
+# הקובץ מניח שתיקיית ה-backend היא שורש ה-Repository ב-GitHub.
+# אם ה-backend נמצא בתת-תיקייה, הוסיפי:  rootDir: backend
+# ============================================================
+services:
+  - type: web
+    name: eventstyle-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    # התקנה (כולל devDependencies שנדרשים לבנייה) + prisma generate + קומפילציה
+    buildCommand: npm ci --include=dev && npm run build
+    # הרצת Migrations, Seed בטוח (יוצר רק מה שחסר) והפעלת השרת
+    startCommand: npm run start:render
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # PORT נקבע אוטומטית על ידי Render
+      - key: DATABASE_URL
+        sync: false # כתובת החיבור מ-Neon (או ספק PostgreSQL אחר)
+      - key: JWT_SECRET
+        generateValue: true # Render יוצר סוד אקראי
+      - key: JWT_EXPIRES_IN
+        value: 2h
+      - key: CORS_ORIGIN
+        sync: false # כתובת צד הלקוח, למשל https://eventstyle.vercel.app
+      - key: EMAIL_PROVIDER
+        value: console # אין שירות מיילים חיצוני – קודי האימות מודפסים ב-Logs
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false # Client ID מ-Google Cloud Console (רשות – בלעדיו התחברות Google מושבתת)
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+      - key: SEED_CLIENT_PASSWORD
+        sync: false

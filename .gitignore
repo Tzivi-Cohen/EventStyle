@@ -1,0 +1,42 @@
+node_modules/
+dist/
+build/
+coverage/
+
+# קובצי סביבה אמיתיים – לעולם לא ל-GitHub
+.env
+.env.*
+!.env.example
+!.env.test.example
+
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.vs/
+*.zip
+
+# מפתחות ותעודות
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+service-account*.json
+*credentials*.json
+
+# גיבויים של מסד נתונים (קובצי ה-SQL של prisma/migrations כן נשמרים)
+*.dump
+*.backup
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+backups/
+
+# קבצים זמניים
+tmp/
+temp/
+*.tmp
+.cache/

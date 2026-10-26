@@ -1,0 +1,65 @@
+{
+  "name": "eventstyle-backend",
+  "version": "1.0.0",
+  "description": "EventStyle – שרת Backend לסטודיו לעיצוב אירועים (Express + TypeScript + Prisma + PostgreSQL)",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/src/server.js",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "postinstall": "prisma generate",
+    "dev": "tsx watch src/server.ts",
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "start": "node dist/src/server.js",
+    "start:render": "prisma migrate deploy && node dist/prisma/seed.js && node dist/src/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma migrate reset",
+    "db:studio": "prisma studio",
+    "prisma:validate": "prisma validate",
+    "openapi:generate": "tsx scripts/generate-openapi.ts",
+    "check": "npm run prisma:validate && npm run typecheck && npm run build && npm test"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "3.0.2",
+    "cloudinary": "2.7.0",
+    "cors": "2.8.5",
+    "dotenv": "16.6.1",
+    "express": "5.1.0",
+    "express-rate-limit": "7.5.1",
+    "google-auth-library": "11.2.0",
+    "helmet": "8.1.0",
+    "jsonwebtoken": "9.0.2",
+    "multer": "2.5.0",
+    "prisma": "6.19.3",
+    "swagger-ui-express": "5.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "12.0.0",
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.3",
+    "@types/jsonwebtoken": "9.0.10",
+    "@types/multer": "2.0.0",
+    "@types/node": "22.18.8",
+    "@types/supertest": "6.0.3",
+    "@types/swagger-ui-express": "4.1.8",
+    "supertest": "7.1.4",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.2"
+  }
+}

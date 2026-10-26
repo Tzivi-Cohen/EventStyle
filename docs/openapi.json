@@ -1,0 +1,3230 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "EventStyle API",
+    "version": "1.0.0",
+    "description": "API של EventStyle – סטודיו לעיצוב אירועים.\n\n**הרשאות:** Guest (ללא התחברות), Client (לקוח מחובר), Admin (מנהלת).\n\n**התחברות ב-Swagger:** קראו ל-`POST /api/auth/login`, העתיקו את `token` מהתשובה, לחצו על **Authorize** והדביקו אותו (בלי המילה Bearer).\n\n**פורמט שגיאות אחיד:** `{ \"error\": { \"code\", \"message\", \"details?\" } }`"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "This server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "הרשמה, התחברות (סיסמה או Google), אימות אימייל ופרופיל"
+    },
+    {
+      "name": "Packages",
+      "description": "חבילות עיצוב"
+    },
+    {
+      "name": "Gallery",
+      "description": "גלריית עיצובים ציבורית"
+    },
+    {
+      "name": "Events",
+      "description": "אירועים (פרטיים – דורש התחברות)"
+    },
+    {
+      "name": "Event Photos",
+      "description": "תמונות אירוע"
+    },
+    {
+      "name": "System",
+      "description": "בדיקת פעילות"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "VALIDATION_ERROR",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "NOT_FOUND",
+                  "CONFLICT",
+                  "INVALID_CREDENTIALS",
+                  "INVALID_CODE",
+                  "CODE_EXPIRED",
+                  "TOO_MANY_REQUESTS",
+                  "FILE_TOO_LARGE",
+                  "UNSUPPORTED_FILE_TYPE",
+                  "STORAGE_NOT_CONFIGURED",
+                  "UPLOAD_FAILED",
+                  "GOOGLE_AUTH_FAILED",
+                  "GOOGLE_AUTH_NOT_CONFIGURED",
+                  "GOOGLE_UNAVAILABLE",
+                  "INTERNAL_ERROR"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "description": "Extra info, e.g. list of invalid fields"
+              }
+            }
+          }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "Admin",
+          "Client"
+        ]
+      },
+      "EventType": {
+        "type": "string",
+        "enum": [
+          "Birthday",
+          "BatMitzvah",
+          "Brit",
+          "Corporate",
+          "Private"
+        ],
+        "description": "Birthday=יום הולדת, BatMitzvah=בת מצווה, Brit=ברית/בריתה, Corporate=אירוע חברה, Private=אירוע פרטי"
+      },
+      "EventStatus": {
+        "type": "string",
+        "enum": [
+          "New",
+          "Planning",
+          "Preparing",
+          "Ready",
+          "Completed"
+        ],
+        "description": "New=חדש, Planning=בתכנון, Preparing=בהכנות, Ready=מוכן, Completed=הושלם"
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "fullName",
+          "email",
+          "phone",
+          "role",
+          "emailVerified",
+          "googleLinked",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Read-only (cannot be changed via the API)"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "description": "null for users who signed up with Google and did not add a phone yet"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "emailVerified": {
+            "type": "boolean"
+          },
+          "googleLinked": {
+            "type": "boolean",
+            "description": "true if the account can sign in with Google"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "id": 2,
+          "fullName": "נועה לוי",
+          "email": "noa.levi@example.com",
+          "phone": "050-1234567",
+          "role": "Client",
+          "emailVerified": true,
+          "googleLinked": false,
+          "createdAt": "2026-10-01T09:00:00.000Z"
+        }
+      },
+      "AuthResult": {
+        "type": "object",
+        "required": [
+          "token",
+          "user"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "JWT access token"
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "fullName",
+          "email",
+          "phone",
+          "password"
+        ],
+        "properties": {
+          "fullName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Normalized to lowercase"
+          },
+          "phone": {
+            "type": "string",
+            "pattern": "^\\+?[0-9][0-9\\s-]{6,18}$"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 72,
+            "description": "At least one letter and one digit"
+          }
+        },
+        "example": {
+          "fullName": "נועה לוי",
+          "email": "noa.levi@example.com",
+          "phone": "050-1234567",
+          "password": "Secret123"
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "email": "noa.levi@example.com",
+          "password": "Secret123"
+        }
+      },
+      "VerifyEmailRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "code"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^\\d{6}$",
+            "description": "6-digit code from the email"
+          }
+        },
+        "example": {
+          "email": "noa.levi@example.com",
+          "code": "482913"
+        }
+      },
+      "GoogleLoginRequest": {
+        "type": "object",
+        "required": [
+          "idToken"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "idToken": {
+            "type": "string",
+            "description": "Google ID Token (the \"credential\" returned by Google Identity Services)"
+          }
+        },
+        "example": {
+          "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ii4uLiJ9..."
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "description": "At least one field. Any other field (email, role, googleId, emailVerified, id, password...) is rejected with 400.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "fullName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "phone": {
+            "type": "string",
+            "pattern": "^\\+?[0-9][0-9\\s-]{6,18}$"
+          }
+        },
+        "example": {
+          "fullName": "נועה לוי-כהן",
+          "phone": "052-7654321"
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "required": [
+          "page",
+          "limit",
+          "totalItems",
+          "totalPages"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "totalItems": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalPages": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "0 when there are no results"
+          }
+        },
+        "example": {
+          "page": 1,
+          "limit": 10,
+          "totalItems": 23,
+          "totalPages": 3
+        }
+      },
+      "ResendCodeRequest": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "example": {
+          "email": "noa.levi@example.com"
+        }
+      },
+      "Package": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "price",
+          "features",
+          "imageUrl"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number",
+            "description": "Demo price (ILS)"
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "imageUrl": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "id": 1,
+          "name": "Basic",
+          "description": "עיצוב שולחן מרכזי, צבעים ואביזרים בסיסיים",
+          "price": 1200,
+          "features": [
+            "עיצוב שולחן מרכזי",
+            "התאמת צבעים",
+            "אביזרים בסיסיים"
+          ],
+          "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600"
+        }
+      },
+      "GalleryItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "category",
+          "url",
+          "publicId",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "url": {
+            "type": "string"
+          },
+          "publicId": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "id": 3,
+          "title": "בת מצווה בגווני זהב",
+          "category": "BatMitzvah",
+          "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+          "publicId": null,
+          "createdAt": "2026-10-05T10:00:00.000Z"
+        }
+      },
+      "EventPhoto": {
+        "type": "object",
+        "required": [
+          "id",
+          "eventId",
+          "url",
+          "publicId",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "eventId": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          },
+          "publicId": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "id": 7,
+          "eventId": 1,
+          "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
+          "publicId": "eventstyle/events/1/abc",
+          "createdAt": "2026-10-20T12:00:00.000Z"
+        }
+      },
+      "Event": {
+        "type": "object",
+        "description": "אירוע. השדה notes מוחזר למנהלת בלבד. ברשימות מוחזר photoCount, ובאירוע בודד מוחזר photos.",
+        "required": [
+          "id",
+          "eventName",
+          "clientName",
+          "clientEmail",
+          "eventType",
+          "eventDate",
+          "location",
+          "packageId",
+          "themeColor",
+          "guestCount",
+          "budget",
+          "status",
+          "coverImageUrl",
+          "userId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "eventName": {
+            "type": "string"
+          },
+          "clientName": {
+            "type": "string"
+          },
+          "clientEmail": {
+            "type": "string",
+            "format": "email"
+          },
+          "eventType": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "eventDate": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-12-15"
+          },
+          "location": {
+            "type": "string"
+          },
+          "packageId": {
+            "type": "integer"
+          },
+          "package": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "themeColor": {
+            "type": "string"
+          },
+          "guestCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "budget": {
+            "type": "number",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/EventStatus"
+          },
+          "coverImageUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true,
+            "description": "Admin only – internal notes"
+          },
+          "userId": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Linked verified client (set by server only)"
+          },
+          "photoCount": {
+            "type": "integer",
+            "description": "In list responses"
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventPhoto"
+            },
+            "description": "In single event responses"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EventInput": {
+        "type": "object",
+        "description": "userId אינו שדה קלט – השרת קובע אותו לפי clientEmail של לקוח מאומת. שדות לא מוכרים נדחים.",
+        "additionalProperties": false,
+        "required": [
+          "eventName",
+          "clientName",
+          "clientEmail",
+          "eventType",
+          "eventDate",
+          "location",
+          "packageId",
+          "themeColor",
+          "guestCount",
+          "budget"
+        ],
+        "properties": {
+          "eventName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "clientName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "clientEmail": {
+            "type": "string",
+            "format": "email"
+          },
+          "eventType": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "eventDate": {
+            "type": "string",
+            "format": "date",
+            "description": "YYYY-MM-DD"
+          },
+          "location": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "packageId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "themeColor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30,
+            "description": "e.g. \"#F4C2C2\" or \"ורוד עתיק\""
+          },
+          "guestCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000
+          },
+          "budget": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Up to 2 decimal places"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EventStatus"
+              }
+            ],
+            "description": "Optional. Create default: New. Update default: unchanged"
+          },
+          "coverImageUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "http(s) URL, or null / empty"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000
+          }
+        },
+        "example": {
+          "eventName": "יום הולדת 30 לנועה",
+          "clientName": "נועה לוי",
+          "clientEmail": "noa.levi@example.com",
+          "eventType": "Birthday",
+          "eventDate": "2026-12-15",
+          "location": "אולם הגן, תל אביב",
+          "packageId": 2,
+          "themeColor": "#F4C2C2",
+          "guestCount": 80,
+          "budget": 4500,
+          "status": "New",
+          "coverImageUrl": null,
+          "notes": "להזמין בלונים בגוון ורוד עתיק"
+        }
+      },
+      "StatusInput": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/EventStatus"
+          }
+        },
+        "example": {
+          "status": "Preparing"
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error"
+            ]
+          },
+          "database": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unreachable"
+            ]
+          },
+          "uptimeSeconds": {
+            "type": "integer"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "status": "ok",
+          "database": "ok",
+          "uptimeSeconds": 120,
+          "timestamp": "2026-10-24T10:00:00.000Z"
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "הרשמת לקוח (Guest)",
+        "description": "יוצר משתמש בתפקיד **Client** בלבד ויוצר קוד אימות בן 6 ספרות (תקף 10 דקות). אין שירות מיילים חיצוני: הקוד מודפס ביומן השרת (EMAIL_PROVIDER=console), ולכן verificationEmailSent תמיד true. מחזיר token, כך שאפשר להיכנס מיד, אבל אירועים קיימים מקושרים רק לאחר אימות האימייל. אם קיים חשבון **לא מאומת** עם אותו אימייל – פרטיו מתעדכנים ונשלח קוד חדש.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/AuthResult"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "verificationEmailSent": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "example": {
+                  "message": "Registration successful. A 6-digit verification code was sent to noa.levi@example.com",
+                  "verificationEmailSent": true,
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQ2xpZW50Iiwic3ViIjoiMiJ9.signature",
+                  "user": {
+                    "id": 2,
+                    "fullName": "נועה לוי",
+                    "email": "noa.levi@example.com",
+                    "phone": "050-1234567",
+                    "role": "Client",
+                    "emailVerified": false,
+                    "googleLinked": false,
+                    "createdAt": "2026-10-01T09:00:00.000Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email already registered and verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "An account with this email already exists"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests – יותר מדי בקשות",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Too many requests, please try again later"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "התחברות (Guest)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Logged in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResult"
+                },
+                "example": {
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQ2xpZW50Iiwic3ViIjoiMiJ9.signature",
+                  "user": {
+                    "id": 2,
+                    "fullName": "נועה לוי",
+                    "email": "noa.levi@example.com",
+                    "phone": "050-1234567",
+                    "role": "Client",
+                    "emailVerified": true,
+                    "googleLinked": false,
+                    "createdAt": "2026-10-01T09:00:00.000Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong email or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "INVALID_CREDENTIALS",
+                    "message": "Invalid email or password"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests – יותר מדי בקשות",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Too many requests, please try again later"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/google": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "התחברות / הרשמה עם Google (Guest)",
+        "description": "שולחים את ה-ID Token שהתקבל מ-Google Identity Services. השרת מאמת חתימה, issuer, audience (GOOGLE_CLIENT_ID) ותוקף, ומזהה את החשבון לפי המזהה היציב של Google (sub).\n\n- **משתמש קיים עם אותו חשבון Google** – התחברות.\n- **משתמש קיים עם אותו אימייל** – קישור רק אם Google היא ספקית האימייל (Gmail / Google Workspace), החשבון הקיים כבר אימת את האימייל, והוא אינו Admin. אחרת 409 בלי שינוי בחשבון.\n- **משתמש חדש** – נוצר בתפקיד **Client** בלבד, בלי סיסמה. אם Google היא ספקית האימייל הוא מאומת מיד ואירועים קיימים מקושרים אליו; אחרת emailVerified=false ויש לאמת בקוד (resend-code + verify-email).\n\nמוחזר אותו JWT של המערכת כמו בהתחברות רגילה. ה-Token של Google לא נשמר.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in (isNewUser=true when the account was just created)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/AuthResult"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "isNewUser": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "example": {
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQ2xpZW50Iiwic3ViIjoiMiJ9.signature",
+                  "user": {
+                    "id": 2,
+                    "fullName": "נועה לוי",
+                    "email": "noa.levi@example.com",
+                    "phone": null,
+                    "role": "Client",
+                    "emailVerified": true,
+                    "googleLinked": true,
+                    "createdAt": "2026-10-01T09:00:00.000Z"
+                  },
+                  "isNewUser": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid / expired Google token, or unverified Google email",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "GOOGLE_AUTH_FAILED",
+                    "message": "Invalid or expired Google token"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An existing account with this email cannot be linked automatically",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "An account with this email already exists. Sign in with your email and password"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests – יותר מדי בקשות",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Too many requests, please try again later"
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Google could not be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "GOOGLE_UNAVAILABLE",
+                    "message": "Could not reach Google to verify the sign-in. Please try again"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "GOOGLE_CLIENT_ID is not set on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "GOOGLE_AUTH_NOT_CONFIGURED",
+                    "message": "Google sign-in is not configured on the server"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/verify-email": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "אימות כתובת האימייל בקוד (Guest / Client)",
+        "description": "קוד בן 6 ספרות, תקף 10 דקות, לשימוש חד-פעמי. אחרי 5 ניסיונות שגויים הקוד נפסל. בהצלחה: המשתמש מסומן כמאומת, אירועים קיימים עם אותו אימייל מקושרים אליו, ומוחזר token חדש.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/AuthResult"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "linkedEventsCount": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "example": {
+                  "message": "Email verified successfully",
+                  "linkedEventsCount": 2,
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQ2xpZW50Iiwic3ViIjoiMiJ9.signature",
+                  "user": {
+                    "id": 2,
+                    "fullName": "נועה לוי",
+                    "email": "noa.levi@example.com",
+                    "phone": "050-1234567",
+                    "role": "Client",
+                    "emailVerified": true,
+                    "googleLinked": false,
+                    "createdAt": "2026-10-01T09:00:00.000Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error / wrong code (INVALID_CODE) / expired code (CODE_EXPIRED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "INVALID_CODE",
+                    "message": "Invalid verification code",
+                    "details": {
+                      "attemptsLeft": 3
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "Email is already verified"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests – יותר מדי בקשות",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Too many requests, please try again later"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/resend-code": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "שליחה חוזרת של קוד אימות (Guest / Client)",
+        "description": "מגבלות: פעם ב-60 שניות, ועד 5 קודים ב-60 דקות. קוד חדש מבטל את הקודם. התשובה זהה גם אם האימייל לא רשום או כבר מאומת (כדי לא לחשוף מידע). הקוד מודפס ביומן השרת (EMAIL_PROVIDER=console) – אין שליחת מייל חיצונית.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendCodeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generic success message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "example": {
+                  "message": "If an unverified account exists for this email, a new verification code has been sent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Cooldown or hourly limit reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "TOO_MANY_REQUESTS",
+                    "message": "Please wait 42 seconds before requesting a new code",
+                    "details": {
+                      "retryAfterSeconds": 42
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "פרטי המשתמש המחובר (Client / Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  }
+                },
+                "example": {
+                  "user": {
+                    "id": 2,
+                    "fullName": "נועה לוי",
+                    "email": "noa.levi@example.com",
+                    "phone": "050-1234567",
+                    "role": "Client",
+                    "emailVerified": true,
+                    "googleLinked": false,
+                    "createdAt": "2026-10-01T09:00:00.000Z"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "עריכת הפרופיל של המשתמש המחובר (Client / Admin)",
+        "description": "אפשר לעדכן רק fullName ו-phone, ורק של המשתמש המחובר (לפי ה-Token). אימייל, תפקיד, חיבור Google ושדות אימות אינם ניתנים לשינוי – שליחתם מחזירה 400.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  }
+                },
+                "example": {
+                  "user": {
+                    "id": 2,
+                    "fullName": "נועה לוי-כהן",
+                    "email": "noa.levi@example.com",
+                    "phone": "052-7654321",
+                    "role": "Client",
+                    "emailVerified": true,
+                    "googleLinked": false,
+                    "createdAt": "2026-10-01T09:00:00.000Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/packages": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "כל חבילות העיצוב (Guest)",
+        "responses": {
+          "200": {
+            "description": "Packages sorted by price",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Package"
+                  }
+                },
+                "example": [
+                  {
+                    "id": 1,
+                    "name": "Basic",
+                    "description": "עיצוב שולחן מרכזי, צבעים ואביזרים בסיסיים",
+                    "price": 1200,
+                    "features": [
+                      "עיצוב שולחן מרכזי",
+                      "התאמת צבעים",
+                      "אביזרים בסיסיים"
+                    ],
+                    "imageUrl": "https://picsum.photos/seed/eventstyle-basic/800/600"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/gallery": {
+      "get": {
+        "tags": [
+          "Gallery"
+        ],
+        "summary": "גלריית עיצובים, עם סינון לפי קטגוריה וחלוקה לעמודים (Guest)",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/EventType"
+            },
+            "description": "Filter by event type"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number (starts at 1)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            },
+            "description": "Items per page (max 100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first, paginated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "pagination"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GalleryItem"
+                      }
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/Pagination"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": 3,
+                      "title": "בת מצווה בגווני זהב",
+                      "category": "BatMitzvah",
+                      "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+                      "publicId": null,
+                      "createdAt": "2026-10-05T10:00:00.000Z"
+                    }
+                  ],
+                  "pagination": {
+                    "page": 1,
+                    "limit": 10,
+                    "totalItems": 1,
+                    "totalPages": 1
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Gallery"
+        ],
+        "summary": "הוספת תמונה לגלריה (Admin)",
+        "description": "multipart/form-data. קובץ אחד בשדה image. סוגים: image/jpeg, image/png, image/webp. עד 5MB.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "image",
+                  "title",
+                  "category"
+                ],
+                "properties": {
+                  "image": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 120
+                  },
+                  "category": {
+                    "$ref": "#/components/schemas/EventType"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalleryItem"
+                },
+                "example": {
+                  "id": 3,
+                  "title": "בת מצווה בגווני זהב",
+                  "category": "BatMitzvah",
+                  "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+                  "publicId": null,
+                  "createdAt": "2026-10-05T10:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File larger than 5MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FILE_TOO_LARGE",
+                    "message": "File is too large (max 5MB)"
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported file type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNSUPPORTED_FILE_TYPE",
+                    "message": "Unsupported file type. Allowed: image/jpeg, image/png, image/webp"
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Image storage (Cloudinary) rejected the upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UPLOAD_FAILED",
+                    "message": "Image upload failed, please try again later"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Image storage (Cloudinary) is not configured on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "STORAGE_NOT_CONFIGURED",
+                    "message": "Image storage is not configured on the server (set CLOUDINARY_* environment variables)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/gallery/{id}": {
+      "delete": {
+        "tags": [
+          "Gallery"
+        ],
+        "summary": "מחיקת תמונה מהגלריה (Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Gallery item id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted successfully – נמחק (ללא תוכן בתשובה)"
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "כל האירועים, עם חיפוש, סינון, מיון וחלוקה לעמודים (Admin)",
+        "description": "החיפוש, הסינון, המיון והחלוקה לעמודים מתבצעים במסד הנתונים. ברירת מחדל: מיון לפי eventDate בסדר יורד, עמוד 1, 10 פריטים בעמוד. totalItems מתייחס לתוצאות אחרי הסינון.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "Search in eventName or clientName (case-insensitive)"
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/EventType"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/EventStatus"
+            }
+          },
+          {
+            "name": "packageId",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "eventDate",
+                "budget",
+                "clientName"
+              ],
+              "default": "eventDate"
+            }
+          },
+          {
+            "name": "sortDir",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number (starts at 1)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            },
+            "description": "Items per page (max 100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events list, paginated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "pagination"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Event"
+                      }
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/Pagination"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": 1,
+                      "eventName": "יום הולדת 30 לנועה",
+                      "clientName": "נועה לוי",
+                      "clientEmail": "noa.levi@example.com",
+                      "eventType": "Birthday",
+                      "eventDate": "2026-12-15",
+                      "location": "אולם הגן, תל אביב",
+                      "packageId": 2,
+                      "package": {
+                        "id": 2,
+                        "name": "Premium"
+                      },
+                      "themeColor": "#F4C2C2",
+                      "guestCount": 80,
+                      "budget": 4500,
+                      "status": "Planning",
+                      "coverImageUrl": null,
+                      "notes": "להזמין בלונים בגוון ורוד עתיק",
+                      "userId": 2,
+                      "createdAt": "2026-10-01T09:00:00.000Z",
+                      "updatedAt": "2026-10-10T09:00:00.000Z",
+                      "photoCount": 1
+                    }
+                  ],
+                  "pagination": {
+                    "page": 1,
+                    "limit": 10,
+                    "totalItems": 1,
+                    "totalPages": 1
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "יצירת אירוע (Admin)",
+        "description": "אם קיים לקוח **מאומת** עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שהלקוח יירשם ויאמת.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 1,
+                  "eventName": "יום הולדת 30 לנועה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "Birthday",
+                  "eventDate": "2026-12-15",
+                  "location": "אולם הגן, תל אביב",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "#F4C2C2",
+                  "guestCount": 80,
+                  "budget": 4500,
+                  "status": "New",
+                  "coverImageUrl": null,
+                  "notes": "להזמין בלונים בגוון ורוד עתיק",
+                  "userId": 2,
+                  "photos": [],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/my": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "האירועים של המשתמש המחובר (Client / Admin)",
+        "description": "לפי userId מתוך ה-Token בלבד. ללקוח לא מוחזר השדה notes. ממוין מהתאריך המאוחר למוקדם.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number (starts at 1)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            },
+            "description": "Items per page (max 100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "My events, paginated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "pagination"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Event"
+                      }
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/Pagination"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": 1,
+                      "eventName": "יום הולדת 30 לנועה",
+                      "clientName": "נועה לוי",
+                      "clientEmail": "noa.levi@example.com",
+                      "eventType": "Birthday",
+                      "eventDate": "2026-12-15",
+                      "location": "אולם הגן, תל אביב",
+                      "packageId": 2,
+                      "package": {
+                        "id": 2,
+                        "name": "Premium"
+                      },
+                      "themeColor": "#F4C2C2",
+                      "guestCount": 80,
+                      "budget": 4500,
+                      "status": "Planning",
+                      "coverImageUrl": null,
+                      "userId": 2,
+                      "createdAt": "2026-10-01T09:00:00.000Z",
+                      "updatedAt": "2026-10-10T09:00:00.000Z",
+                      "photoCount": 1
+                    }
+                  ],
+                  "pagination": {
+                    "page": 1,
+                    "limit": 10,
+                    "totalItems": 1,
+                    "totalPages": 1
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "אירוע אחד, כולל תמונות (Admin או בעל האירוע)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event (client view – without notes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 1,
+                  "eventName": "יום הולדת 30 לנועה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "Birthday",
+                  "eventDate": "2026-12-15",
+                  "location": "אולם הגן, תל אביב",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "#F4C2C2",
+                  "guestCount": 80,
+                  "budget": 4500,
+                  "status": "Planning",
+                  "coverImageUrl": null,
+                  "userId": 2,
+                  "photos": [
+                    {
+                      "id": 7,
+                      "eventId": 1,
+                      "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
+                      "publicId": "eventstyle/events/1/abc",
+                      "createdAt": "2026-10-20T12:00:00.000Z"
+                    }
+                  ],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Event belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have access to this event"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "עריכת אירוע – החלפה מלאה (Admin)",
+        "description": "יש לשלוח את כל שדות החובה. status אופציונלי (אם לא נשלח – לא משתנה). הקישור ללקוח מחושב מחדש לפי clientEmail.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 1,
+                  "eventName": "יום הולדת 30 לנועה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "Birthday",
+                  "eventDate": "2026-12-15",
+                  "location": "אולם הגן, תל אביב",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "#F4C2C2",
+                  "guestCount": 80,
+                  "budget": 4500,
+                  "status": "Planning",
+                  "coverImageUrl": null,
+                  "notes": "להזמין בלונים בגוון ורוד עתיק",
+                  "userId": 2,
+                  "photos": [
+                    {
+                      "id": 7,
+                      "eventId": 1,
+                      "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
+                      "publicId": "eventstyle/events/1/abc",
+                      "createdAt": "2026-10-20T12:00:00.000Z"
+                    }
+                  ],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "מחיקת אירוע וכל התמונות שלו (Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted successfully – נמחק (ללא תוכן בתשובה)"
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/status": {
+      "patch": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "עדכון סטטוס ההכנות (Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 1,
+                  "eventName": "יום הולדת 30 לנועה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "Birthday",
+                  "eventDate": "2026-12-15",
+                  "location": "אולם הגן, תל אביב",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "#F4C2C2",
+                  "guestCount": 80,
+                  "budget": 4500,
+                  "status": "Preparing",
+                  "coverImageUrl": null,
+                  "notes": "להזמין בלונים בגוון ורוד עתיק",
+                  "userId": 2,
+                  "photos": [
+                    {
+                      "id": 7,
+                      "eventId": 1,
+                      "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
+                      "publicId": "eventstyle/events/1/abc",
+                      "createdAt": "2026-10-20T12:00:00.000Z"
+                    }
+                  ],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/photos": {
+      "post": {
+        "tags": [
+          "Event Photos"
+        ],
+        "summary": "העלאת תמונות לאירוע (Admin)",
+        "description": "multipart/form-data. 1–10 קבצים בשדה photos. סוגים: image/jpeg, image/png, image/webp. עד 5MB לקובץ.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "photos"
+                ],
+                "properties": {
+                  "photos": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created photos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventPhoto"
+                  }
+                },
+                "example": [
+                  {
+                    "id": 7,
+                    "eventId": 1,
+                    "url": "https://res.cloudinary.com/demo/image/upload/v1/eventstyle/events/1/abc.jpg",
+                    "publicId": "eventstyle/events/1/abc",
+                    "createdAt": "2026-10-20T12:00:00.000Z"
+                  }
+                ]
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File larger than 5MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FILE_TOO_LARGE",
+                    "message": "File is too large (max 5MB)"
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported file type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNSUPPORTED_FILE_TYPE",
+                    "message": "Unsupported file type. Allowed: image/jpeg, image/png, image/webp"
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Image storage (Cloudinary) rejected the upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UPLOAD_FAILED",
+                    "message": "Image upload failed, please try again later"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Image storage (Cloudinary) is not configured on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "STORAGE_NOT_CONFIGURED",
+                    "message": "Image storage is not configured on the server (set CLOUDINARY_* environment variables)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/photos/{photoId}": {
+      "delete": {
+        "tags": [
+          "Event Photos"
+        ],
+        "summary": "מחיקת תמונת אירוע (Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "photoId",
+            "in": "path",
+            "required": true,
+            "description": "Photo id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted successfully – נמחק (ללא תוכן בתשובה)"
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "בדיקת פעילות השרת ומסד הנתונים (Guest)",
+        "responses": {
+          "200": {
+            "description": "Healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "example": {
+                  "status": "error",
+                  "database": "unreachable",
+                  "uptimeSeconds": 5,
+                  "timestamp": "2026-10-24T10:00:00.000Z"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
