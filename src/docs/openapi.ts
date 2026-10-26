@@ -429,7 +429,8 @@ export const openApiDocument = {
           `יוצר משתמש בתפקיד **Client** בלבד ויוצר קוד אימות בן 6 ספרות (תקף ${VERIFICATION.CODE_TTL_MINUTES} דקות). ` +
           'אין שירות מיילים חיצוני: הקוד מודפס ביומן השרת (EMAIL_PROVIDER=console), ולכן verificationEmailSent תמיד true. ' +
           'מחזיר token, כך שאפשר להיכנס מיד, אבל אירועים קיימים מקושרים רק לאחר אימות האימייל. ' +
-          'אם קיים חשבון **לא מאומת** עם אותו אימייל – פרטיו מתעדכנים ונשלח קוד חדש.',
+          'אם קיים חשבון **לא מאומת** עם אותו אימייל (Client, בלי Google) – הוא מוחלף בחשבון חדש עם id חדש ונשלח קוד חדש; ' +
+          'כל token שהונפק לחשבון הישן נדחה (401). מגבלות שליחת הקודים נשמרות. חשבון מאומת או חשבון Admin לא מוחלפים (409).',
         requestBody: { required: true, content: jsonContent(ref('RegisterRequest')) },
         responses: {
           201: {
@@ -453,7 +454,11 @@ export const openApiDocument = {
             ),
           },
           400: R.validation,
-          409: errorResponse('Email already registered and verified', 'CONFLICT', 'An account with this email already exists'),
+          409: errorResponse(
+            'Email already registered and verified, belongs to an Admin or Google account, or the account changed during the request',
+            'CONFLICT',
+            'An account with this email already exists',
+          ),
           429: R.tooMany,
         },
       },
@@ -479,8 +484,12 @@ export const openApiDocument = {
           'שולחים את ה-ID Token שהתקבל מ-Google Identity Services. השרת מאמת חתימה, issuer, audience (GOOGLE_CLIENT_ID) ותוקף, ' +
           'ומזהה את החשבון לפי המזהה היציב של Google (sub).\n\n' +
           '- **משתמש קיים עם אותו חשבון Google** – התחברות.\n' +
-          '- **משתמש קיים עם אותו אימייל** – קישור רק אם Google היא ספקית האימייל (Gmail / Google Workspace), ' +
-          'החשבון הקיים כבר אימת את האימייל, והוא אינו Admin. אחרת 409 בלי שינוי בחשבון.\n' +
+          '- **משתמש קיים עם אותו אימייל** – רק אם Google היא ספקית האימייל (Gmail / Google Workspace), ' +
+          'החשבון אינו Admin ואינו מקושר לחשבון Google אחר:\n' +
+          '  - חשבון **מאומת** – מקושר ל-Google (אותו id, הסיסמה ממשיכה לעבוד).\n' +
+          '  - חשבון **לא מאומת** – בעל הכתובת המוכח גובר: החשבון הישן נמחק ונוצר חשבון Google חדש ומאומת (id חדש, ' +
+          'בלי הסיסמה והטלפון של הישן, isNewUser=true). כל token של החשבון הישן נדחה (401).\n' +
+          '  אחרת 409 בלי שינוי בחשבון.\n' +
           '- **משתמש חדש** – נוצר בתפקיד **Client** בלבד, בלי סיסמה. אם Google היא ספקית האימייל הוא מאומת מיד ' +
           'ואירועים קיימים מקושרים אליו; אחרת emailVerified=false ויש לאמת בקוד (resend-code + verify-email).\n\n' +
           'מוחזר אותו JWT של המערכת כמו בהתחברות רגילה. ה-Token של Google לא נשמר.',

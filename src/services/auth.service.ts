@@ -1,4 +1,4 @@
-import type { User } from '@prisma/client';
+import type { Prisma, User } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { HttpError } from '../errors/HttpError';
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from '../auth/password';
@@ -9,7 +9,7 @@ import {
   hashVerificationCode,
   verificationCodeMatches,
 } from '../auth/verificationCode';
-import { verifyGoogleIdToken } from '../auth/googleToken';
+import { verifyGoogleIdToken, type GoogleIdentity } from '../auth/googleToken';
 import { getMailer } from './email/mailer';
 import { toPublicUser } from '../utils/mappers';
 import type { LoginInput, RegisterInput, UpdateProfileInput, VerifyEmailInput } from '../schemas/auth.schema';
@@ -18,6 +18,38 @@ const MINUTE = 60 * 1000;
 
 function authResponse(user: User) {
   return { token: signAccessToken(user), user: toPublicUser(user) };
+}
+
+/**
+ * חשבון שאפשר להחליף כשבעל הכתובת האמיתי מוכיח בעלות: לקוח שעדיין לא אימת את האימייל
+ * ואין לו חשבון Google. חשבון מאומת או חשבון מנהלת לעולם לא מוחלף.
+ */
+function isReplaceableUnverified(user: Pick<User, 'emailVerified' | 'role' | 'googleId'>): boolean {
+  return !user.emailVerified && user.role === 'Client' && user.googleId === null;
+}
+
+/**
+ * מחיקת חשבון לא מאומת כחלק מהחלפת בעלות (בתוך Transaction).
+ * מוחקים ולא מעדכנים כדי שהחשבון החדש יקבל id חדש – כך כל JWT שהונפק לחשבון הישן
+ * נדחה (401 "User no longer exists").
+ * המחיקה מותנית: אם בינתיים החשבון אומת, קושר ל-Google, או שיש לו אירועים
+ * (מצב שלא אמור לקרות לחשבון לא מאומת) – לא נמחק דבר, והבקשה נכשלת עם 409.
+ */
+async function deleteReplaceableAccount(tx: Prisma.TransactionClient, userId: number) {
+  const { count } = await tx.user.deleteMany({
+    where: { id: userId, emailVerified: false, role: 'Client', googleId: null, events: { none: {} } },
+  });
+  if (count !== 1) {
+    throw HttpError.conflict('The account was changed by another request. Please try again');
+  }
+}
+
+/** קישור אירועים שממתינים לכתובת האימייל – רק למשתמש שהבעלות שלו על הכתובת מאומתת */
+function linkPendingEvents(tx: Prisma.TransactionClient, user: Pick<User, 'id' | 'email'>) {
+  return tx.event.updateMany({
+    where: { clientEmail: user.email, userId: null },
+    data: { userId: user.id },
+  });
 }
 
 /**
@@ -68,35 +100,35 @@ function prepareNewCode(email: string, user: Pick<User, 'verificationLastSentAt'
 /**
  * הרשמה: תמיד בתפקיד Client, עם emailVerified=false.
  * נשלח קוד אימות למייל. אירועים קיימים מקושרים רק אחרי אימות מוצלח.
- * אם קיים חשבון שעדיין לא אומת עם אותו אימייל – הפרטים מתעדכנים ונשלח קוד חדש
- * (כך שאי אפשר "לתפוס" כתובת של מישהו אחר בלי לאמת אותה).
+ * אם קיים חשבון שעדיין לא אומת עם אותו אימייל – הוא מוחלף בחשבון חדש (id חדש) ונשלח קוד חדש.
+ * כך אי אפשר "לתפוס" כתובת של מישהו אחר בלי לאמת אותה, וה-JWT שהונפק לחשבון הישן נדחה.
+ * מגבלות שליחת הקודים (Cooldown ומכסה לשעה) עוברות לחשבון החדש.
  */
 export async function register(input: RegisterInput) {
   const existing = await prisma.user.findUnique({ where: { email: input.email } });
-  // חשבון שמקושר ל-Google לא נדרס בהרשמה עם סיסמה (גם אם האימייל שלו עוד לא אומת)
-  if (existing && (existing.emailVerified || existing.role === 'Admin' || existing.googleId)) {
+  // חשבון מאומת, חשבון מנהלת וחשבון שמקושר ל-Google לא מוחלפים בהרשמה עם סיסמה
+  if (existing && !isReplaceableUnverified(existing)) {
     throw HttpError.conflict('An account with this email already exists');
   }
 
   const passwordHash = await hashPassword(input.password);
   const { code, data: codeData } = prepareNewCode(input.email, existing);
+  const newUserData = {
+    fullName: input.fullName,
+    email: input.email,
+    phone: input.phone,
+    passwordHash,
+    role: 'Client' as const,
+    emailVerified: false,
+    ...codeData,
+  };
 
   const user = existing
-    ? await prisma.user.update({
-        where: { id: existing.id },
-        data: { fullName: input.fullName, phone: input.phone, passwordHash, ...codeData },
+    ? await prisma.$transaction(async (tx) => {
+        await deleteReplaceableAccount(tx, existing.id);
+        return tx.user.create({ data: newUserData });
       })
-    : await prisma.user.create({
-        data: {
-          fullName: input.fullName,
-          email: input.email,
-          phone: input.phone,
-          passwordHash,
-          role: 'Client',
-          emailVerified: false,
-          ...codeData,
-        },
-      });
+    : await prisma.user.create({ data: newUserData });
 
   let verificationEmailSent = true;
   try {
@@ -152,10 +184,14 @@ export async function updateProfile(userId: number, input: UpdateProfileInput) {
  * הזיהוי לפי המזהה היציב של Google (sub), לא לפי האימייל.
  *
  * 1. יש משתמש עם אותו googleId → התחברות.
- * 2. אין, אבל יש משתמש עם אותו אימייל → קישור רק אם זה בטוח:
+ * 2. אין, אבל יש משתמש עם אותו אימייל → פעולה רק אם זה בטוח:
+ *    - החשבון אינו Admin (מנהלת מתחברת רק עם סיסמה), ואינו מקושר לחשבון Google אחר.
  *    - Google היא ספקית האימייל (Gmail / Workspace), כך שהבעלות על הכתובת ודאית.
- *    - החשבון הקיים כבר אימת את האימייל אצלנו (אחרת ייתכן שמישהו "תפס" את הכתובת עם סיסמה משלו).
- *    - החשבון אינו Admin (מנהלת מתחברת רק עם סיסמה).
+ *    ואז:
+ *    - חשבון מאומת → מקשרים אליו את Google (אותו id, הסיסמה ממשיכה לעבוד).
+ *    - חשבון לא מאומת → ייתכן שמישהו "תפס" את הכתובת עם סיסמה משלו. בעל הכתובת המוכח גובר:
+ *      החשבון הישן נמחק ונוצר חשבון Google חדש (id חדש, בלי הסיסמה והטלפון של החשבון הישן),
+ *      כך שגם ה-JWT של החשבון הישן נדחה.
  *    אחרת → 409, בלי לשנות דבר בחשבון הקיים.
  * 3. אין משתמש כלל → משתמש חדש בתפקיד Client בלבד.
  */
@@ -180,40 +216,49 @@ export async function loginWithGoogle(idToken: string) {
         'An account with this email already exists. Sign in with your email and password',
       );
     }
-    if (!byEmail.emailVerified) {
-      throw HttpError.conflict(
-        'An unverified account with this email already exists. Verify the email with the code first, then sign in with Google',
-      );
+
+    if (isReplaceableUnverified(byEmail)) {
+      const user = await prisma.$transaction(async (tx) => {
+        await deleteReplaceableAccount(tx, byEmail.id);
+        return createGoogleUser(tx, google);
+      });
+      return { ...authResponse(user), isNewUser: true };
     }
-    const linked = await prisma.user.update({
-      where: { id: byEmail.id },
+
+    // קישור מותנה: רק אם החשבון עדיין מאומת ועדיין לא מקושר (בטוח גם בבקשות מקבילות)
+    const { count } = await prisma.user.updateMany({
+      where: { id: byEmail.id, role: 'Client', emailVerified: true, googleId: null },
       data: { googleId: google.googleId },
     });
+    if (count !== 1) {
+      throw HttpError.conflict('The account was changed by another request. Please try again');
+    }
+    const linked = await prisma.user.findUniqueOrThrow({ where: { id: byEmail.id } });
     return { ...authResponse(linked), isNewUser: false };
   }
 
-  // משתמש חדש. האימייל נחשב מאומת רק כש-Google היא ספקית הדואר שלו;
-  // אחרת המשתמש יאמת אותו בקוד במייל (resend-code + verify-email), כמו בהרשמה רגילה.
-  const fullName = (google.name ?? google.email.split('@')[0]!).slice(0, 100);
-  const user = await prisma.$transaction(async (tx) => {
-    const created = await tx.user.create({
-      data: {
-        fullName,
-        email: google.email,
-        googleId: google.googleId,
-        role: 'Client',
-        emailVerified: google.emailTrusted,
-      },
-    });
-    if (google.emailTrusted) {
-      await tx.event.updateMany({
-        where: { clientEmail: created.email, userId: null },
-        data: { userId: created.id },
-      });
-    }
-    return created;
-  });
+  const user = await prisma.$transaction((tx) => createGoogleUser(tx, google));
   return { ...authResponse(user), isNewUser: true };
+}
+
+/**
+ * משתמש Google חדש בתפקיד Client. האימייל נחשב מאומת רק כש-Google היא ספקית הדואר שלו;
+ * אחרת המשתמש יאמת אותו בקוד במייל (resend-code + verify-email), כמו בהרשמה רגילה.
+ */
+async function createGoogleUser(tx: Prisma.TransactionClient, google: GoogleIdentity) {
+  const created = await tx.user.create({
+    data: {
+      fullName: (google.name ?? google.email.split('@')[0]!).slice(0, 100),
+      email: google.email,
+      googleId: google.googleId,
+      role: 'Client',
+      emailVerified: google.emailTrusted,
+    },
+  });
+  if (google.emailTrusted) {
+    await linkPendingEvents(tx, created);
+  }
+  return created;
 }
 
 const invalidCode = () =>
@@ -272,10 +317,7 @@ export async function verifyEmail(input: VerifyEmailInput) {
     });
     if (consumed.count !== 1) throw invalidCode();
 
-    const linked = await tx.event.updateMany({
-      where: { clientEmail: user.email, userId: null },
-      data: { userId: user.id },
-    });
+    const linked = await linkPendingEvents(tx, user);
     const verifiedUser = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
     return { linkedEventsCount: linked.count, verifiedUser };
   });

@@ -219,15 +219,6 @@ describe('Google sign-in – existing accounts', () => {
     expect(user.googleId).toBeNull();
   });
 
-  it('does NOT link to an unverified account (protects against email squatting)', async () => {
-    await createUser({ email: 'noa.google@gmail.com', verified: false, password: 'Squatter1' });
-    const res = await signIn(googleToken());
-    expect(res.status).toBe(409);
-    const user = await prisma.user.findUniqueOrThrow({ where: { email: 'noa.google@gmail.com' } });
-    expect(user.googleId).toBeNull();
-    expect(user.passwordHash).not.toBeNull(); // לא נמחקה שום סיסמה
-  });
-
   it('rejects a second Google account for an email that is already linked', async () => {
     await signIn(googleToken());
     const res = await signIn(googleToken({ sub: 'another-google-sub' }));
@@ -254,5 +245,177 @@ describe('Google sign-in – existing accounts', () => {
     expect(register.status).toBe(409);
     const user = await prisma.user.findUniqueOrThrow({ where: { email: 'dana@company.co.il' } });
     expect(user.passwordHash).toBeNull();
+  });
+});
+
+describe('Google sign-in – reclaiming an unverified (squatted) email', () => {
+  const EMAIL = 'noa.google@gmail.com';
+
+  /** "תוקף" נרשם עם הכתובת של נועה ולא מאמת אותה – ומקבל JWT משלו */
+  async function squat(email = EMAIL) {
+    const reg = await api
+      .post('/api/auth/register')
+      .send({ fullName: 'Squatter', email, phone: '050-9999999', password: 'Squatter1' });
+    expect(reg.status).toBe(201);
+    return { id: reg.body.user.id as number, auth: `Bearer ${reg.body.token}` };
+  }
+
+  it('the real Gmail owner reclaims the address: new verified Google account with a new id', async () => {
+    const squatter = await squat();
+    const res = await signIn(googleToken());
+    expect(res.status).toBe(200);
+    expect(res.body.isNewUser).toBe(true);
+    expect(res.body.user).toMatchObject({
+      email: EMAIL,
+      fullName: 'Noa Google',
+      role: 'Client',
+      emailVerified: true,
+      googleLinked: true,
+      phone: null, // הטלפון של החשבון הישן לא עובר
+    });
+    expect(res.body.user.id).not.toBe(squatter.id);
+
+    const users = await prisma.user.findMany({ where: { email: EMAIL } });
+    expect(users).toHaveLength(1);
+    expect(users[0]!.googleId).toBe('google-sub-1');
+    expect(users[0]!.passwordHash).toBeNull();
+    expect(users[0]!.verificationCodeHash).toBeNull();
+  });
+
+  it('the password of the squatter stops working', async () => {
+    await squat();
+    await signIn(googleToken()).expect(200);
+    const login = await api.post('/api/auth/login').send({ email: EMAIL, password: 'Squatter1' });
+    expect(login.status).toBe(401);
+    expect(login.body.error.code).toBe('INVALID_CREDENTIALS');
+  });
+
+  it('the old JWT of the squatter is rejected (401) everywhere', async () => {
+    const squatter = await squat();
+    await api.get('/api/auth/me').set('Authorization', squatter.auth).expect(200);
+
+    await signIn(googleToken()).expect(200);
+
+    for (const path of ['/api/auth/me', '/api/events/my']) {
+      const res = await api.get(path).set('Authorization', squatter.auth);
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('UNAUTHORIZED');
+    }
+    await api.patch('/api/auth/me').set('Authorization', squatter.auth).send({ fullName: 'Hacked' }).expect(401);
+  });
+
+  it('pending events are linked to the real owner only, never to the squatter', async () => {
+    const admin = await createAdmin();
+    const created = await api
+      .post('/api/events')
+      .set('Authorization', admin.auth)
+      .send(eventBody({ clientEmail: EMAIL }))
+      .expect(201);
+    expect(created.body.userId).toBeNull();
+
+    const squatter = await squat();
+    expect((await api.get('/api/events/my').set('Authorization', squatter.auth)).body.data).toHaveLength(0);
+
+    const owner = await signIn(googleToken());
+    const my = await api.get('/api/events/my').set('Authorization', `Bearer ${owner.body.token}`);
+    expect(my.body.data.map((e: { id: number }) => e.id)).toEqual([created.body.id]);
+
+    await api.get(`/api/events/${created.body.id}`).set('Authorization', squatter.auth).expect(401);
+  });
+
+  it('the verification code of the squatter can no longer be used', async () => {
+    await squat();
+    const code = mailer.lastCodeFor(EMAIL)!;
+    await signIn(googleToken()).expect(200);
+
+    const verify = await api.post('/api/auth/verify-email').send({ email: EMAIL, code });
+    expect(verify.status).toBe(409); // החשבון כבר מאומת – אין קוד פעיל
+    expect(verify.body).not.toHaveProperty('token');
+  });
+
+  it('after reclaiming, the same Google account signs in to the same user (no duplicates)', async () => {
+    await squat();
+    const first = await signIn(googleToken());
+    const second = await signIn(googleToken());
+    expect(second.status).toBe(200);
+    expect(second.body.isNewUser).toBe(false);
+    expect(second.body.user.id).toBe(first.body.user.id);
+    expect(await prisma.user.count({ where: { email: EMAIL } })).toBe(1);
+  });
+
+  it('works for a Google Workspace domain (hd claim)', async () => {
+    await squat('avi@studio.co.il');
+    const res = await signIn(googleToken({ sub: 'sub-ws', email: 'avi@studio.co.il', hd: 'studio.co.il' }));
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({ email: 'avi@studio.co.il', emailVerified: true, googleLinked: true });
+  });
+
+  it('a VERIFIED password account is never replaced: linked in place, same id, password still works', async () => {
+    const existing = await createUser({ email: EMAIL, password: 'Password1', verified: true });
+    const res = await signIn(googleToken());
+    expect(res.status).toBe(200);
+    expect(res.body.isNewUser).toBe(false);
+    expect(res.body.user.id).toBe(existing.user.id);
+    await api.get('/api/auth/me').set('Authorization', existing.auth).expect(200); // ה-JWT הקיים ממשיך לעבוד
+    await api.post('/api/auth/login').send({ email: EMAIL, password: 'Password1' }).expect(200);
+  });
+
+  it('an Admin account is never replaced, even if it is not verified', async () => {
+    const admin = await createUser({ email: EMAIL, role: 'Admin', verified: false, password: 'AdminPass1' });
+    const res = await signIn(googleToken());
+    expect(res.status).toBe(409);
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: EMAIL } });
+    expect(user).toMatchObject({ id: admin.user.id, role: 'Admin', googleId: null });
+    await api.get('/api/auth/me').set('Authorization', admin.auth).expect(200);
+    await api.post('/api/auth/login').send({ email: EMAIL, password: 'AdminPass1' }).expect(200);
+  });
+
+  it('an unverified account with a NON-Google email is not replaced (Google does not prove ownership)', async () => {
+    const squatter = await squat('dana@company.co.il');
+    const res = await signIn(googleToken({ sub: 'sub-dana', email: 'dana@company.co.il' }));
+    expect(res.status).toBe(409);
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: 'dana@company.co.il' } });
+    expect(user.id).toBe(squatter.id);
+    expect(user.googleId).toBeNull();
+    expect(user.passwordHash).not.toBeNull();
+  });
+
+  it('an unverified account already linked to another Google account is not replaced', async () => {
+    // משתמש Google מדומיין שאינו של Google נשאר לא מאומת
+    const first = await signIn(googleToken({ sub: 'sub-a', email: 'dana@company.co.il' }));
+    expect(first.body.user.emailVerified).toBe(false);
+
+    const res = await signIn(googleToken({ sub: 'sub-b', email: 'dana@company.co.il', hd: 'company.co.il' }));
+    expect(res.status).toBe(409);
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: 'dana@company.co.il' } });
+    expect(user).toMatchObject({ id: first.body.user.id, googleId: 'sub-a' });
+  });
+
+  it('concurrent Google sign-ins for a squatted email create exactly one account', async () => {
+    await squat();
+    const results = await Promise.all([signIn(googleToken()), signIn(googleToken()), signIn(googleToken())]);
+    const statuses = results.map((r) => r.status);
+    expect(statuses).toContain(200);
+    for (const status of statuses) expect([200, 409]).toContain(status);
+
+    const users = await prisma.user.findMany({ where: { email: EMAIL } });
+    expect(users).toHaveLength(1);
+    expect(users[0]!.googleId).toBe('google-sub-1');
+    // כל מי שקיבל 200 קיבל את אותו משתמש
+    const ids = new Set(results.filter((r) => r.status === 200).map((r) => r.body.user.id));
+    expect([...ids]).toEqual([users[0]!.id]);
+  });
+
+  it('a concurrent password re-registration and Google sign-in never leave two accounts', async () => {
+    await squat();
+    await prisma.user.update({ where: { email: EMAIL }, data: { verificationLastSentAt: new Date(Date.now() - 61_000) } });
+    const [google, register] = await Promise.all([
+      signIn(googleToken()),
+      api.post('/api/auth/register').send({ fullName: 'Other', email: EMAIL, phone: '050-1111111', password: 'Other1234' }),
+    ]);
+    for (const res of [google, register]) expect(res.status).toBeLessThan(500);
+    expect(await prisma.user.count({ where: { email: EMAIL } })).toBe(1);
   });
 });

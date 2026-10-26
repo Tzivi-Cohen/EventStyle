@@ -242,11 +242,11 @@ POST /auth/google { idToken } ──► השרת מאמת את הטוקן מול
 | החשבון כבר מקושר לאותו חשבון Google | התחברות רגילה (הזיהוי לפי מזהה Google, גם אם האימייל השתנה) |
 | חשבון רגיל (עם סיסמה) **מאומת**, וכתובת Gmail או Workspace | החשבון מקושר ל־Google. מעכשיו אפשר להתחבר בשתי הדרכים, **והסיסמה ממשיכה לעבוד** |
 | חשבון רגיל, וכתובת שאינה Gmail או Workspace | `409`: "התחברי עם אימייל וסיסמה". החשבון לא משתנה |
-| חשבון רגיל שעוד **לא אימת** את האימייל | `409`: יש לאמת קודם את האימייל בקוד, ואז להתחבר עם Google |
+| חשבון רגיל שעוד **לא אימת** את האימייל, וכתובת Gmail או Workspace | `200` עם `isNewUser: true`: Google מוכיחה שזו בעלת הכתובת, ולכן החשבון הלא מאומת **מוחלף** בחשבון Google חדש ומאומת (`id` חדש). הסיסמה והטלפון של החשבון הישן לא עוברים, וכל Token ישן שלו מקבל `401` |
 | חשבון Admin | `409`: מנהלת מתחברת רק עם סיסמה |
 | האימייל כבר מקושר לחשבון Google **אחר** | `409` |
 
-> **למה לא מקשרים לפי אימייל בלבד?** כדי שמי שפתח חשבון עם כתובת של מישהו אחר (בלי לאמת אותה) לא יקבל גישה לחשבון של בעל הכתובת האמיתי, ולהפך.
+> **למה לא מקשרים לפי אימייל בלבד?** כדי שמי שפתח חשבון עם כתובת של מישהו אחר (בלי לאמת אותה) לא יקבל גישה לחשבון של בעל הכתובת האמיתי, ולהפך. חשבון לא מאומת לא "חוסם" את בעלת הכתובת: כשהיא מוכיחה בעלות דרך Google (או נרשמת מחדש ומאמתת בקוד), החשבון הלא מאומת מוחלף, ומי שתפס את הכתובת מאבד את הגישה.
 
 **משתמש שנרשם רק עם Google:**
 - **התחברות עם סיסמה:** תחזיר `401 INVALID_CREDENTIALS`, כי אין לו סיסמה. הציגי לו את כפתור Google.
@@ -551,11 +551,11 @@ export interface ApiErrorBody {
 | HTTP | code | מתי |
 |---|---|---|
 | 400 | `VALIDATION_ERROR` | שדה חסר או לא תקין, או שדה מיותר (למשל `role`) |
-| 409 | `CONFLICT` | `An account with this email already exists`: האימייל כבר רשום **ומאומת**, או שייך לחשבון שמקושר ל־Google (אז מתחברים עם כפתור Google) |
+| 409 | `CONFLICT` | `An account with this email already exists`: האימייל כבר רשום **ומאומת**, או שייך לחשבון שמקושר ל־Google (אז מתחברים עם כפתור Google). במקרה נדיר של בקשה מקבילה: `The account was changed by another request. Please try again` |
 | 429 | `TOO_MANY_REQUESTS` | הרשמה חוזרת לאותו אימייל לא מאומת תוך פחות מ־60 שניות, או יותר מ־5 קודים בשעה. ראי `details.retryAfterSeconds` |
 
 **הערות:**
-- **אימייל רשום שלא אומת:** אם קיים חשבון **לא מאומת** עם אותו אימייל, ההרשמה מעדכנת את הפרטים שלו (שם, טלפון וסיסמה) ושולחת קוד חדש. התשובה היא `201`.
+- **אימייל רשום שלא אומת:** אם קיים חשבון **לא מאומת** עם אותו אימייל (לא Admin ולא מקושר ל־Google), ההרשמה **מחליפה** אותו בחשבון חדש עם `id` חדש ושולחת קוד חדש. התשובה היא `201`. כל Token של החשבון הישן מקבל `401`, והקוד הישן כבר לא תקף. מגבלות השליחה (60 שניות, 5 קודים בשעה) ממשיכות לחול.
 - **`verificationEmailSent`:** השדה נשאר בתשובה כדי לשמור על תאימות, ותמיד יהיה `true`, כי הדפסת הקוד ביומן השרת לא נכשלת. ההודעה `message` עדיין אומרת `...was sent to <email>`, אבל בפועל הקוד נמצא ביומן השרת.
 - **אחרי הרשמה:** שמרי את ה־Token ועברי למסך הזנת הקוד.
 
@@ -749,7 +749,7 @@ export interface ApiErrorBody {
 | 401 | `GOOGLE_AUTH_FAILED` | `Invalid or expired Google token` | חתימה, מנפיק, `aud` או תוקף לא תקינים |
 | 401 | `GOOGLE_AUTH_FAILED` | `The email address of this Google account is not verified` | חשבון Google שהאימייל שלו לא מאומת אצל Google |
 | 409 | `CONFLICT` | `An account with this email already exists. Sign in with your email and password` | חשבון קיים, וכתובת שאינה Gmail או Workspace |
-| 409 | `CONFLICT` | `An unverified account with this email already exists. Verify the email with the code first, then sign in with Google` | חשבון קיים שלא אומת |
+| 409 | `CONFLICT` | `The account was changed by another request. Please try again` | נדיר: החשבון השתנה בדיוק באותו רגע (למשל אומת או הוחלף בבקשה מקבילה). אפשר לנסות שוב |
 | 409 | `CONFLICT` | `This account must sign in with email and password` | חשבון Admin |
 | 409 | `CONFLICT` | `This email is already linked to a different Google account` | האימייל מקושר לחשבון Google אחר |
 | 429 | `TOO_MANY_REQUESTS` | | יותר מ־30 ניסיונות ב־15 דקות (משותף לכל נתיבי ההתחברות) |
