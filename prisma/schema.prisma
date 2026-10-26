@@ -31,6 +31,13 @@ enum EventStatus {
   Completed
 }
 
+// סוג האחסון של תמונת אירוע ב-Cloudinary (תואם ל-ImageAccess בקוד):
+// public = קישור ציבורי קבוע (התמונות הקיימות), authenticated = קובץ פרטי שנגיש רק בקישור חתום וזמני
+enum PhotoStorageType {
+  public
+  authenticated
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   fullName     String   @db.VarChar(100)
@@ -56,7 +63,8 @@ model User {
   verificationSendCount     Int       @default(0)
   verificationWindowStart   DateTime?
 
-  events Event[]
+  events         Event[]
+  uploadedPhotos EventPhoto[]
 
   @@map("Users")
 }
@@ -121,33 +129,50 @@ model Event {
 }
 
 model EventPhoto {
-  id        Int      @id @default(autoincrement())
-  eventId   Int
-  url       String   @db.VarChar(500)
-  publicId  String?  @db.VarChar(255)
-  createdAt DateTime @default(now())
+  id             Int              @id @default(autoincrement())
+  eventId        Int
+  // בתמונה ציבורית: הקישור הקבוע. בתמונה authenticated לא נשמר קישור קבוע – הצפייה רק בקישור זמני
+  url            String           @db.VarChar(500)
+  publicId       String?          @db.VarChar(255)
+  createdAt      DateTime         @default(now())
+  // מי העלה את התמונה. null בתמונות ישנות ובמשתמש שנמחק (SetNull)
+  uploadedById   Int?
+  // ברירת המחדל public שומרת על משמעות התמונות הקיימות ועל ההעלאה הנוכחית של המנהלת
+  storageType    PhotoStorageType @default(public)
+  // הסכמת הלקוחה לאפשרות פרסום בגלריה. פרסום בפועל רק באישור מנהלת
+  publishConsent Boolean          @default(false)
+  // SHA-256 (hex) של הקובץ המעובד – למניעת העלאה כפולה לאותו אירוע. null בתמונות ישנות
+  contentHash    String?          @db.Char(64)
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event       Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  uploadedBy  User?        @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  galleryItem GalleryItem?
 
+  @@unique([eventId, contentHash])
   @@index([eventId])
+  @@index([uploadedById])
   @@map("EventPhotos")
 }
 
 // הגלריה הציבורית: רק פריטים שהמנהלת העלתה (ובעתיד – גם תמונות לקוחות שהמנהלת אישרה, כעותק נפרד).
 // תמונות לא מאושרות לעולם לא נשמרות כאן.
 model GalleryItem {
-  id          Int       @id @default(autoincrement())
-  title       String    @db.VarChar(120)
-  category    EventType
-  url         String    @db.VarChar(500)
-  publicId    String?   @db.VarChar(255)
+  id                 Int         @id @default(autoincrement())
+  title              String      @db.VarChar(120)
+  category           EventType
+  url                String      @db.VarChar(500)
+  publicId           String?     @db.VarChar(255)
   // false = מוסתרת: לא מופיעה באף נתיב ציבורי (הקובץ עצמו נשאר ב-Cloudinary)
-  isPublished Boolean   @default(true)
+  isPublished        Boolean     @default(true)
   // תמונה מובילה (למשל לדף הבית ולתמונת השער של הגלריה)
-  isFeatured  Boolean   @default(false)
-  sortOrder   Int       @default(0)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  isFeatured         Boolean     @default(false)
+  sortOrder          Int         @default(0)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  // תמונת האירוע שממנה נוצר עותק הגלריה (כשמנהלת מפרסמת תמונה של לקוחה). ייחודי – תמונה מתפרסמת פעם אחת.
+  // SetNull: מחיקת תמונת המקור או האירוע לא מוחקת את פריט הגלריה אוטומטית; מדיניות המחיקה תיקבע בקוד באישור
+  sourceEventPhotoId Int?        @unique
+  sourceEventPhoto   EventPhoto? @relation(fields: [sourceEventPhotoId], references: [id], onDelete: SetNull)
 
   @@index([category])
   @@index([createdAt])

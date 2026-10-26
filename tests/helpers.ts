@@ -5,7 +5,15 @@ import { prisma } from '../src/db/prisma';
 import { hashPassword } from '../src/auth/password';
 import { signAccessToken } from '../src/auth/jwt';
 import { setMailer, type Mailer } from '../src/services/email/mailer';
-import { setImageStorage, type ImageStorage, type StoredImage } from '../src/services/storage/imageStorage';
+import {
+  PRIVATE_DOWNLOAD_TTL_SECONDS,
+  setImageStorage,
+  type ImageAccess,
+  type ImageStorage,
+  type PrivateDownloadLink,
+  type PrivateStoredImage,
+  type StoredImage,
+} from '../src/services/storage/imageStorage';
 
 export { prisma };
 
@@ -24,15 +32,34 @@ export class FakeMailer implements Mailer {
 export class FakeStorage implements ImageStorage {
   uploads = 0;
   removed: string[] = [];
+  /** סוג האחסון של כל מחיקה (לפי הסדר) */
+  removedWith: { publicId: string; access: ImageAccess }[] = [];
   /** הקבצים שהגיעו לשלב האחסון (אחרי כל הבדיקות והעיבוד) */
   files: Express.Multer.File[] = [];
-  async upload(file: Express.Multer.File, folder: string): Promise<StoredImage> {
+  /** סוג האחסון של כל העלאה (לפי הסדר) */
+  uploadAccess: ImageAccess[] = [];
+
+  upload(file: Express.Multer.File, folder: string, options?: { access?: 'public' }): Promise<StoredImage>;
+  upload(file: Express.Multer.File, folder: string, options: { access: 'authenticated' }): Promise<PrivateStoredImage>;
+  async upload(file: Express.Multer.File, folder: string, options: { access?: ImageAccess } = {}): Promise<StoredImage | PrivateStoredImage> {
+    const access = options.access ?? 'public';
     this.uploads += 1;
     this.files.push(file);
+    this.uploadAccess.push(access);
+    if (access === 'authenticated') {
+      return { access, publicId: `${folder}/private-${this.uploads}`, format: 'png' };
+    }
     return { url: `https://cdn.test/${folder}/${this.uploads}.png`, publicId: `${folder}/${this.uploads}` };
   }
-  async remove(publicId: string) {
+
+  getPrivateDownloadUrl(publicId: string, format: string, options: { expiresInSeconds?: number } = {}): PrivateDownloadLink {
+    const expiresAt = new Date(Date.now() + (options.expiresInSeconds ?? PRIVATE_DOWNLOAD_TTL_SECONDS) * 1000);
+    return { url: `https://private.test/${publicId}.${format}?expires_at=${Math.floor(expiresAt.getTime() / 1000)}`, expiresAt };
+  }
+
+  async remove(publicId: string, options: { access?: ImageAccess } = {}) {
     this.removed.push(publicId);
+    this.removedWith.push({ publicId, access: options.access ?? 'public' });
   }
 }
 
@@ -56,7 +83,9 @@ export async function resetDatabase() {
   mailer.sent = [];
   storage.uploads = 0;
   storage.removed = [];
+  storage.removedWith = [];
   storage.files = [];
+  storage.uploadAccess = [];
   setImageStorage(storage);
 
   await prisma.package.createMany({
