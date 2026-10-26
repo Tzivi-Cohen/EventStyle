@@ -4,6 +4,8 @@ import { ALLOWED_MIME_TYPES, MAX_FILES_PER_REQUEST, MAX_FILE_SIZE_MB } from '../
 import { VERIFICATION } from '../config/verification';
 import { ADDRESS_MAX_LENGTH } from '../schemas/auth.schema';
 import { MAX_FEATURES, MAX_SORT_ORDER } from '../schemas/package.schema';
+import { MAX_GALLERY_SORT_ORDER } from '../schemas/gallery.schema';
+import { MAX_IMAGE_DIMENSION } from '../services/storage/imageProcessing';
 
 /**
  * מסמך OpenAPI 3 של EventStyle.
@@ -177,8 +179,11 @@ const exampleGallery = {
   category: 'BatMitzvah',
   url: 'https://picsum.photos/seed/eventstyle-gallery-3/1200/800',
   publicId: null,
+  isFeatured: true,
+  sortOrder: 0,
   createdAt: '2026-10-05T10:00:00.000Z',
 };
+const exampleAdminGallery = { ...exampleGallery, isPublished: true, updatedAt: '2026-10-27T12:00:00.000Z' };
 
 const authResult = { token: exampleToken, user: exampleUser };
 
@@ -400,16 +405,62 @@ export const openApiDocument = {
       },
       GalleryItem: {
         type: 'object',
-        required: ['id', 'title', 'category', 'url', 'publicId', 'createdAt'],
+        description: 'פריט בגלריה הציבורית. נתיבים ציבוריים מחזירים רק פריטים מפורסמים.',
+        required: ['id', 'title', 'category', 'url', 'publicId', 'isFeatured', 'sortOrder', 'createdAt'],
         properties: {
           id: { type: 'integer' },
           title: { type: 'string' },
           category: ref('EventType'),
           url: { type: 'string' },
           publicId: { type: 'string', nullable: true },
+          isFeatured: { type: 'boolean', description: 'Featured image (home page, gallery cover)' },
+          sortOrder: { type: 'integer', minimum: 0, description: 'Display order (then newest first)' },
           createdAt: { type: 'string', format: 'date-time' },
         },
         example: exampleGallery,
+      },
+      AdminGalleryItem: {
+        description: 'פריט גלריה בממשק הניהול – כולל מצב הפרסום',
+        allOf: [
+          ref('GalleryItem'),
+          {
+            type: 'object',
+            required: ['isPublished', 'updatedAt'],
+            properties: {
+              isPublished: { type: 'boolean', description: 'false = hidden from every public endpoint (the file stays in storage)' },
+              updatedAt: { type: 'string', format: 'date-time' },
+            },
+          },
+        ],
+        example: exampleAdminGallery,
+      },
+      GalleryUpdateInput: {
+        type: 'object',
+        description: 'לפחות שדה אחד. הקובץ עצמו לא משתנה. שדות לא מוכרים (למשל url) נדחים.',
+        additionalProperties: false,
+        minProperties: 1,
+        properties: {
+          title: { type: 'string', minLength: 2, maxLength: 120 },
+          category: ref('EventType'),
+          isPublished: { type: 'boolean' },
+          isFeatured: { type: 'boolean' },
+          sortOrder: { type: 'integer', minimum: 0, maximum: MAX_GALLERY_SORT_ORDER },
+        },
+        example: { title: 'בת מצווה בגווני זהב ולבן', isFeatured: true, sortOrder: 1 },
+      },
+      GallerySummaryItem: {
+        type: 'object',
+        required: ['category', 'count', 'cover'],
+        properties: {
+          category: ref('EventType'),
+          count: { type: 'integer', minimum: 0, description: 'Published items only' },
+          cover: {
+            allOf: [ref('GalleryItem')],
+            nullable: true,
+            description: 'A featured item if there is one, otherwise the first by order. null when the category is empty',
+          },
+        },
+        example: { category: 'BatMitzvah', count: 2, cover: exampleGallery },
       },
       EventPhoto: {
         type: 'object',
@@ -798,19 +849,24 @@ export const openApiDocument = {
       get: {
         tags: ['Gallery'],
         summary: 'גלריית עיצובים, עם סינון לפי קטגוריה וחלוקה לעמודים (Guest)',
+        description: 'רק פריטים מפורסמים. סדר: sortOrder, ואז החדשים קודם.',
         parameters: [
           { name: 'category', in: 'query', required: false, schema: ref('EventType'), description: 'Filter by event type' },
+          { name: 'featured', in: 'query', required: false, schema: { type: 'string', enum: ['true', 'false'] }, description: 'true = featured items only' },
           ...pageParams,
         ],
         responses: {
-          200: { description: 'Newest first, paginated', content: jsonContent(pageOf('GalleryItem'), examplePage(exampleGallery)) },
+          200: { description: 'Published items, paginated', content: jsonContent(pageOf('GalleryItem'), examplePage(exampleGallery)) },
           400: R.validation,
         },
       },
       post: {
         tags: ['Gallery'],
         summary: 'הוספת תמונה לגלריה (Admin)',
-        description: `multipart/form-data. קובץ אחד בשדה image. סוגים: ${ALLOWED_MIME_TYPES.join(', ')}. עד ${MAX_FILE_SIZE_MB}MB.`,
+        description:
+          `multipart/form-data. קובץ אחד בשדה image. סוגים: ${ALLOWED_MIME_TYPES.join(', ')}. עד ${MAX_FILE_SIZE_MB}MB.\n\n` +
+          `התמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד ${MAX_IMAGE_DIMENSION}px והסרת כל המטא-דאטה (כולל GPS).\n\n` +
+          'שדות רשות (טקסט): isPublished ("true"/"false", ברירת מחדל true), isFeatured (ברירת מחדל false), sortOrder (ברירת מחדל 0).',
         security: bearer,
         requestBody: {
           required: true,
@@ -823,13 +879,16 @@ export const openApiDocument = {
                   image: { type: 'string', format: 'binary' },
                   title: { type: 'string', minLength: 2, maxLength: 120 },
                   category: ref('EventType'),
+                  isPublished: { type: 'string', enum: ['true', 'false'] },
+                  isFeatured: { type: 'string', enum: ['true', 'false'] },
+                  sortOrder: { type: 'string', pattern: '^\\d+$', description: `0–${MAX_GALLERY_SORT_ORDER}` },
                 },
               },
             },
           },
         },
         responses: {
-          201: { description: 'Created', content: jsonContent(ref('GalleryItem'), exampleGallery) },
+          201: { description: 'Created', content: jsonContent(ref('AdminGalleryItem'), exampleAdminGallery) },
           400: R.validation,
           401: R.unauthorized,
           403: R.forbidden,
@@ -840,13 +899,64 @@ export const openApiDocument = {
         },
       },
     },
+    '/api/gallery/summary': {
+      get: {
+        tags: ['Gallery'],
+        summary: 'סיכום הגלריות: לכל סוג אירוע – מספר תמונות מפורסמות ותמונת שער (Guest)',
+        description: 'תמיד 5 שורות, אחת לכל סוג אירוע. פריטים מוסתרים לא נספרים ולא נבחרים כשער. סוג ריק: count=0, cover=null.',
+        responses: {
+          200: {
+            description: 'One row per event type',
+            content: jsonContent({ type: 'array', items: ref('GallerySummaryItem') }, [
+              { category: 'Birthday', count: 0, cover: null },
+              { category: 'BatMitzvah', count: 2, cover: exampleGallery },
+            ]),
+          },
+        },
+      },
+    },
     '/api/gallery/{id}': {
+      patch: {
+        tags: ['Gallery'],
+        summary: 'עריכת פריט גלריה: כותרת, סוג, פרסום / הסתרה, מובילה, סדר (Admin)',
+        description: 'שדה שלא נשלח לא משתנה. הסתרה (isPublished=false) לא מוחקת את הקובץ.',
+        security: bearer,
+        parameters: [idParam('id', 'Gallery item id')],
+        requestBody: { required: true, content: jsonContent(ref('GalleryUpdateInput')) },
+        responses: {
+          200: { description: 'Updated', content: jsonContent(ref('AdminGalleryItem'), exampleAdminGallery) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          404: errorResponse('Gallery item not found', 'NOT_FOUND', 'Gallery item not found'),
+        },
+      },
       delete: {
         tags: ['Gallery'],
-        summary: 'מחיקת תמונה מהגלריה (Admin)',
+        summary: 'מחיקת תמונה מהגלריה לצמיתות, כולל הקובץ באחסון (Admin)',
+        description: 'להסתרה בלי מחיקה: PATCH עם isPublished=false.',
         security: bearer,
         parameters: [idParam('id', 'Gallery item id')],
         responses: { 204: R.noContent, 400: R.validation, 401: R.unauthorized, 403: R.forbidden, 404: R.notFound },
+      },
+    },
+    '/api/admin/gallery': {
+      get: {
+        tags: ['Admin'],
+        summary: 'כל פריטי הגלריה לניהול, כולל מוסתרים (Admin)',
+        security: bearer,
+        parameters: [
+          { name: 'category', in: 'query', required: false, schema: ref('EventType') },
+          { name: 'isPublished', in: 'query', required: false, schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'isFeatured', in: 'query', required: false, schema: { type: 'string', enum: ['true', 'false'] } },
+          ...pageParams,
+        ],
+        responses: {
+          200: { description: 'All gallery items, paginated', content: jsonContent(pageOf('AdminGalleryItem'), examplePage(exampleAdminGallery)) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+        },
       },
     },
     '/api/events': {
@@ -965,7 +1075,9 @@ export const openApiDocument = {
       post: {
         tags: ['Event Photos'],
         summary: 'העלאת תמונות לאירוע (Admin)',
-        description: `multipart/form-data. 1–${MAX_FILES_PER_REQUEST} קבצים בשדה photos. סוגים: ${ALLOWED_MIME_TYPES.join(', ')}. עד ${MAX_FILE_SIZE_MB}MB לקובץ.`,
+        description:
+          `multipart/form-data. 1–${MAX_FILES_PER_REQUEST} קבצים בשדה photos. סוגים: ${ALLOWED_MIME_TYPES.join(', ')}. עד ${MAX_FILE_SIZE_MB}MB לקובץ.\n\n` +
+          `כל תמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד ${MAX_IMAGE_DIMENSION}px והסרת כל המטא-דאטה (כולל GPS).`,
         security: bearer,
         parameters: [idParam()],
         requestBody: {

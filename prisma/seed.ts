@@ -4,7 +4,8 @@
  * - בטוח להרצה חוזרת: יוצר רק מה שחסר ולא דורס או משנה נתונים קיימים.
  * - חשבון Admin נוצר רק כאן (אי אפשר להירשם כ-Admin דרך ה-API).
  * - ב-Production (NODE_ENV=production) נוצרים רק נתוני התחלה הכרחיים:
- *   שלוש החבילות הכלליות (רק כשטבלת החבילות ריקה) וחשבון המנהלת (רק עם SEED_ADMIN_PASSWORD).
+ *   שלוש החבילות הכלליות – בארכיון, כדי שמחירי ההדגמה לא יוצגו לציבור (רק כשטבלת החבילות ריקה) –
+ *   וחשבון המנהלת (רק עם SEED_ADMIN_PASSWORD).
  *   לקוחות, אירועים, פריטי גלריה וחבילות לפי סוג אירוע הם נתוני הדגמה – והם לעולם לא נוצרים ב-Production.
  * - כל השמות והפרטים מומצאים.
  */
@@ -117,10 +118,17 @@ export async function seed(prisma: PrismaClient, options: SeedOptions) {
   const allowDemo = !options.isProduction;
 
   // ---------- חבילות כלליות: רק בהקמה ראשונה (טבלה ריקה) ----------
-  // כך הרצה חוזרת לא תחזיר חבילה שהמנהלת שינתה את שמה או העבירה לארכיון
+  // כך הרצה חוזרת לא תחזיר חבילה שהמנהלת שינתה את שמה או העבירה לארכיון.
+  // ב-Production הן נוצרות בארכיון (isActive=false): מחירי ההדגמה לא מוצגים לציבור
+  // עד שהמנהלת מעדכנת אותם ומפעילה את החבילה (PUT /api/packages/:id עם isActive=true)
   if ((await prisma.package.count()) === 0) {
-    await prisma.package.createMany({ data: BASE_PACKAGES });
-    log(`   ✓ ${BASE_PACKAGES.length} general packages`);
+    await prisma.package.createMany({
+      data: BASE_PACKAGES.map((pkg) => ({ ...pkg, isActive: !options.isProduction })),
+    });
+    log(
+      `   ✓ ${BASE_PACKAGES.length} general packages` +
+        (options.isProduction ? ' (archived – activate them after setting real prices)' : ''),
+    );
   } else {
     log('   ✓ packages already exist – general packages skipped');
   }

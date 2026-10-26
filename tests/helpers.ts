@@ -24,8 +24,11 @@ export class FakeMailer implements Mailer {
 export class FakeStorage implements ImageStorage {
   uploads = 0;
   removed: string[] = [];
-  async upload(_file: Express.Multer.File, folder: string): Promise<StoredImage> {
+  /** הקבצים שהגיעו לשלב האחסון (אחרי כל הבדיקות והעיבוד) */
+  files: Express.Multer.File[] = [];
+  async upload(file: Express.Multer.File, folder: string): Promise<StoredImage> {
     this.uploads += 1;
+    this.files.push(file);
     return { url: `https://cdn.test/${folder}/${this.uploads}.png`, publicId: `${folder}/${this.uploads}` };
   }
   async remove(publicId: string) {
@@ -53,6 +56,7 @@ export async function resetDatabase() {
   mailer.sent = [];
   storage.uploads = 0;
   storage.removed = [];
+  storage.files = [];
   setImageStorage(storage);
 
   await prisma.package.createMany({

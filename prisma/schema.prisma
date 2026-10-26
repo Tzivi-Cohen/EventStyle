@@ -133,15 +133,24 @@ model EventPhoto {
   @@map("EventPhotos")
 }
 
+// הגלריה הציבורית: רק פריטים שהמנהלת העלתה (ובעתיד – גם תמונות לקוחות שהמנהלת אישרה, כעותק נפרד).
+// תמונות לא מאושרות לעולם לא נשמרות כאן.
 model GalleryItem {
-  id        Int       @id @default(autoincrement())
-  title     String    @db.VarChar(120)
-  category  EventType
-  url       String    @db.VarChar(500)
-  publicId  String?   @db.VarChar(255)
-  createdAt DateTime  @default(now())
+  id          Int       @id @default(autoincrement())
+  title       String    @db.VarChar(120)
+  category    EventType
+  url         String    @db.VarChar(500)
+  publicId    String?   @db.VarChar(255)
+  // false = מוסתרת: לא מופיעה באף נתיב ציבורי (הקובץ עצמו נשאר ב-Cloudinary)
+  isPublished Boolean   @default(true)
+  // תמונה מובילה (למשל לדף הבית ולתמונת השער של הגלריה)
+  isFeatured  Boolean   @default(false)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([category])
   @@index([createdAt])
+  @@index([category, isPublished, sortOrder])
   @@map("GalleryItems")
 }

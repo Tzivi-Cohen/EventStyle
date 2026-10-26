@@ -11,8 +11,9 @@
 |---|---|
 | **Guest** – אורח | דף הבית, גלריה (עם סינון לפי סוג אירוע), מחירון חבילות לפי סוג אירוע, הרשמה והתחברות |
 | **Client** – לקוח | כל מה שמותר לאורח, וגם צפייה באירועים שלו בלבד: פרטים, סטטוס ותמונות |
-| **Admin** – מנהלת | ניהול מלא של האירועים (יצירה, עריכה, מחיקה, סטטוס, תמונות), ניהול הגלריה, ניהול המחירון (חבילות, מחירים, סדר, ארכיון), חיפוש, סינון ומיון |
+| **Admin** – מנהלת | ניהול מלא של האירועים (יצירה, עריכה, מחיקה, סטטוס, תמונות), ניהול הגלריה (העלאה, עריכה, שיוך לסוג אירוע, פרסום/הסתרה, תמונות מובילות, סדר, מחיקה), ניהול המחירון (חבילות, מחירים, סדר, ארכיון), חיפוש, סינון ומיון |
 
+- **גלריות:** לכל סוג אירוע גלריה משלו (`category`). פריט מוסתר לא מופיע באף נתיב ציבורי. כרגע רק המנהלת מעלה תמונות; העלאה בידי לקוחות (עם אישור מנהלת) מתוכננת לשלב הבא.
 - **מחירון:** לכל חבילה יש סוג אירוע, או שהיא כללית (מתאימה לכל סוג). המחירון להצגה בלבד – אין תשלום באתר. מחיר החבילה לא נשמר בהזמנה, ולכן שינוי מחיר לא משנה הזמנות קיימות. הסרת חבילה = ארכיון בלבד.
 
 - כל מי שנרשם באתר מקבל תמיד תפקיד **Client**. חשבון **Admin** נוצר רק ב־Seed.
@@ -94,11 +95,11 @@ npm run dev                   # השרת: http://localhost:4000
 | `Events` | האירועים | `userId → Users.id` (אופציונלי, SET NULL), `packageId → Packages.id` (חובה, RESTRICT) |
 | `EventPhotos` | תמונות אירוע | `eventId → Events.id` (CASCADE) |
 | `Packages` | המחירון: חבילות כלליות (`eventType = NULL`) וחבילות לפי סוג אירוע, עם `isActive` (ארכיון) ו־`sortOrder` | 1 חבילה ← הרבה אירועים |
-| `GalleryItems` | גלריה ציבורית | – |
+| `GalleryItems` | הגלריה הציבורית לפי סוג אירוע, עם `isPublished` (פרסום/הסתרה), `isFeatured` (מובילה) ו־`sortOrder` | – |
 
-- **אינדקסים:** `eventDate`, `status`, `eventType`, `packageId`, `userId`, `clientEmail`, `clientName`, `eventName`, `category`, ובחבילות `(eventType, isActive)`.
+- **אינדקסים:** `eventDate`, `status`, `eventType`, `packageId`, `userId`, `clientEmail`, `clientName`, `eventName`, `category`, בחבילות `(eventType, isActive)` ובגלריה `(category, isPublished, sortOrder)`.
 - **ייחודיות שם חבילה:** בתוך אותו סוג אירוע (`eventType, name`), ובין החבילות הכלליות – באינדקס ייחודי חלקי `Packages_general_name_key` שנוצר ב־Migration (Prisma לא מתארת אותו ב־schema; יש לוודא שהוא לא מוסר ב־Migrations עתידיים).
-- **אילוצי CHECK:** `guestCount > 0`, `budget >= 0`, `price >= 0`, `sortOrder >= 0`, אימייל באותיות קטנות, שמות לא ריקים, וכתובת שאינה רווחים בלבד.
+- **אילוצי CHECK:** `guestCount > 0`, `budget >= 0`, `price >= 0`, `sortOrder >= 0` (חבילות וגלריה), אימייל באותיות קטנות, שמות וכותרות לא ריקים, וכתובת שאינה רווחים בלבד.
 - **`budget` באירוע** הוא תקציב העיצוב של האירוע, ואינו מחיר החבילה.
 
 פקודות שימושיות: `npm run db:migrate` (Migration חדש בפיתוח), `npm run db:studio` (צפייה בנתונים), `npm run db:reset` (איפוס מלא בפיתוח).
@@ -117,7 +118,7 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 
 דוח הבדיקות האחרון: [docs/TEST-REPORT.md](docs/TEST-REPORT.md).
 
-## רשימת Endpoints (25)
+## רשימת Endpoints (28)
 
 הבסיס הוא `/api`. התיעוד המלא נמצא ב־Swagger (`/api-docs`, או בקיצור `/docs`) ובקובץ `docs/openapi.json`.
 
@@ -129,9 +130,9 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 | 4 | POST | `/api/auth/verify-email` | Guest |
 | 5 | POST | `/api/auth/resend-code` | Guest |
 | 6 | GET | `/api/packages?eventType=` | Guest |
-| 7 | GET | `/api/gallery?category=&page=&limit=` | Guest |
+| 7 | GET | `/api/gallery?category=&featured=&page=&limit=` | Guest |
 | 8 | POST | `/api/gallery` | Admin |
-| 9 | DELETE | `/api/gallery/:id` | Admin |
+| 9 | DELETE | `/api/gallery/:id` (לצמיתות) | Admin |
 | 10 | GET | `/api/events?search=&eventType=&status=&packageId=&sortBy=&sortDir=&page=&limit=` | Admin |
 | 11 | GET | `/api/events/my?page=&limit=` | מחובר |
 | 12 | GET | `/api/events/:id` | Admin או בעל האירוע |
@@ -148,8 +149,11 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 | 23 | PUT | `/api/packages/:id` | Admin |
 | 24 | DELETE | `/api/packages/:id` (ארכיון) | Admin |
 | 25 | GET | `/api/admin/packages?eventType=&isActive=` | Admin |
+| 26 | PATCH | `/api/gallery/:id` | Admin |
+| 27 | GET | `/api/gallery/summary` | Guest |
+| 28 | GET | `/api/admin/gallery?category=&isPublished=&isFeatured=&page=&limit=` | Admin |
 
-17 הפעולות מהאפיון, ועוד 2 פעולות לאימות האימייל (מספרים 4 ו־5), התחברות עם Google (20), עריכת פרופיל (21) וניהול המחירון (22–25).
+17 הפעולות מהאפיון, ועוד 2 פעולות לאימות האימייל (מספרים 4 ו־5), התחברות עם Google (20), עריכת פרופיל (21), ניהול המחירון (22–25) וניהול הגלריה (26–28).
 
 **התנתקות:** השרת עובד עם JWT בלי מצב (Stateless), ולכן אין Endpoint ל־Logout. הלקוח מוחק את ה־Token מ־`localStorage` ומאפס את המשתמש ב־Context. Token שפג תוקפו (`JWT_EXPIRES_IN`, ברירת מחדל שעתיים) או שהמשתמש שלו נמחק מקבל 401.
 
@@ -165,5 +169,7 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 - Rate Limiting על ההרשמה, ההתחברות והאימות, Cooldown של 60 שניות ועד 5 קודים בשעה.
 - Zod על כל קלט. שדות לא מוכרים (כמו `userId` או `role`) נדחים.
 - העלאות: רק JPEG/PNG/WEBP, עד 5MB, ובדיקת חתימת הקובץ האמיתית (Magic Bytes).
+- עיבוד מחדש של כל תמונה בשרת (sharp) לפני האחסון: סיבוב לפי EXIF, הקטנה עד 2500px, והסרת כל המטא־דאטה (EXIF כולל GPS, IPTC, XMP) – נבדק בבדיקות אוטומטיות. ב־Cloudinary שכבה נוספת: `allowed_formats` ו־`force_strip`.
+- **תמונות פרטיות בעתיד:** קישורי Cloudinary רגילים פתוחים לכל מי שמחזיק בהם. לפני העלאה בידי לקוחות, תמונות פרטיות (ותמונות שממתינות לאישור) יחייבו הגנת גישה גם ברמת האחסון והקישור – למשל `type: 'authenticated'` עם קישורים חתומים בעלי תוקף – ולא רק בדיקת הרשאות ב־API.
 - CORS לפי `CORS_ORIGIN`. Helmet מוסיף כותרות אבטחה.
 - תשובות ה־API אף פעם לא כוללות Hash, קודים, מפתחות או Stack Trace.

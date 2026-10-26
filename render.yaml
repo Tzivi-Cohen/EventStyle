@@ -43,5 +43,5 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD
         sync: false
-      # ב-Production ה-Seed יוצר רק את 3 החבילות הכלליות (כשאין חבילות) ואת המנהלת.
+      # ב-Production ה-Seed יוצר רק את 3 החבילות הכלליות – בארכיון, בלי מחירי הדגמה גלויים (כשאין חבילות) – ואת המנהלת.
       # לקוחות, אירועים, גלריה וחבילות הדגמה לא נוצרים, ולכן SEED_CLIENT_PASSWORD לא נדרש כאן.

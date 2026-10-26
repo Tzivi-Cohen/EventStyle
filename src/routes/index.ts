@@ -22,9 +22,11 @@ authRouter.get('/me', authenticate, auth.me);
 authRouter.patch('/me', authenticate, auth.updateMe);
 
 const galleryRouter = Router();
-galleryRouter.get('/', gallery.listGallery);
+galleryRouter.get('/', gallery.listGallery); // ציבורי: מפורסמים בלבד
+galleryRouter.get('/summary', gallery.getGallerySummary); // ציבורי: מפורסמים בלבד
 galleryRouter.post('/', authenticate, requireAdmin, uploadSingleImage('image'), gallery.addGalleryItem);
-galleryRouter.delete('/:id', authenticate, requireAdmin, gallery.deleteGalleryItem);
+galleryRouter.patch('/:id', authenticate, requireAdmin, gallery.updateGalleryItem);
+galleryRouter.delete('/:id', authenticate, requireAdmin, gallery.deleteGalleryItem); // מחיקה לצמיתות
 
 const eventsRouter = Router();
 eventsRouter.use(authenticate);
@@ -49,6 +51,7 @@ packagesRouter.delete('/:id', authenticate, requireAdmin, packages.archivePackag
 const adminRouter = Router();
 adminRouter.use(authenticate, requireAdmin);
 adminRouter.get('/packages', packages.listAdminPackages);
+adminRouter.get('/gallery', gallery.listAdminGallery);
 
 export const apiRouter = Router();
 apiRouter.get('/health', system.health);

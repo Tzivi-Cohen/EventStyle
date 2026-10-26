@@ -1,6 +1,7 @@
-import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
+import { v2 as cloudinary, type UploadApiOptions, type UploadApiResponse } from 'cloudinary';
 import { env } from '../../config/env';
 import { HttpError } from '../../errors/HttpError';
+import { MAX_IMAGE_DIMENSION } from './imageProcessing';
 
 export interface StoredImage {
   url: string;
@@ -12,6 +13,26 @@ export interface ImageStorage {
   upload(file: Express.Multer.File, folder: string): Promise<StoredImage>;
   remove(publicId: string): Promise<void>;
 }
+
+/**
+ * הגדרות ההעלאה ל-Cloudinary – שכבת הגנה שנייה, אחרי העיבוד בשרת (sanitizeImage).
+ * לפי תיעוד Upload API של Cloudinary:
+ * - allowed_formats: קבצים בפורמט אחר נדחים.
+ * - transformation: "incoming transformation" שרץ לפני השמירה בענן – כאן הגבלת גודל (crop: limit),
+ *   והדגל force_strip: "clear all embedded metadata while applying an incoming transformation".
+ * - public_id נוצר על ידי Cloudinary (שם הקובץ המקורי לא משמש).
+ *
+ * חשוב לעתיד: קישורי upload רגילים של Cloudinary פתוחים לכל מי שמחזיק בהם. תמונות פרטיות של לקוחות
+ * (העלאה לאירוע, תמונות שממתינות לאישור) יחייבו הגנת גישה גם ברמת האחסון והקישור –
+ * למשל type: 'authenticated' עם קישורים חתומים ובעלי תוקף – ולא רק בדיקת הרשאות ב-API.
+ */
+export const CLOUDINARY_UPLOAD_OPTIONS = {
+  resource_type: 'image',
+  allowed_formats: ['jpg', 'png', 'webp'],
+  transformation: [{ width: MAX_IMAGE_DIMENSION, height: MAX_IMAGE_DIMENSION, crop: 'limit', flags: 'force_strip' }],
+  use_filename: false,
+  unique_filename: true,
+} satisfies UploadApiOptions;
 
 export class CloudinaryStorage implements ImageStorage {
   constructor() {
@@ -26,7 +47,7 @@ export class CloudinaryStorage implements ImageStorage {
   upload(file: Express.Multer.File, folder: string): Promise<StoredImage> {
     return new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
-        { folder: `eventstyle/${folder}`, resource_type: 'image' },
+        { ...CLOUDINARY_UPLOAD_OPTIONS, folder: `eventstyle/${folder}` },
         (error, result?: UploadApiResponse) => {
           if (error || !result) {
             console.error('Cloudinary upload failed:', error?.message);

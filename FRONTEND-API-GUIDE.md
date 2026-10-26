@@ -395,7 +395,31 @@ export interface GalleryItem {
   category: EventType;
   url: string;
   publicId: string | null;  // מזהה ב־Cloudinary. לא נדרש לתצוגה
+  isFeatured: boolean;      // תמונה מובילה (דף הבית, תמונת שער)
+  sortOrder: number;        // סדר ההצגה (ואז החדשים קודם)
   createdAt: string;
+}
+
+/** פריט גלריה בממשק הניהול (GET /admin/gallery, POST /gallery, PATCH /gallery/:id) */
+export interface AdminGalleryItem extends GalleryItem {
+  isPublished: boolean;     // false = מוסתר מכל הנתיבים הציבוריים
+  updatedAt: string;
+}
+
+/** גוף PATCH /gallery/:id – לפחות שדה אחד */
+export interface GalleryUpdate {
+  title?: string;
+  category?: EventType;
+  isPublished?: boolean;
+  isFeatured?: boolean;
+  sortOrder?: number;
+}
+
+/** שורה בתשובת GET /gallery/summary – אחת לכל סוג אירוע */
+export interface GallerySummaryItem {
+  category: EventType;
+  count: number;              // תמונות מפורסמות בלבד
+  cover: GalleryItem | null;  // null כשאין תמונות מפורסמות בסוג
 }
 
 export interface EventPhoto {
@@ -448,6 +472,7 @@ export interface EventInput {
 
 export interface GalleryFilters extends PageParams {
   category?: EventType;
+  featured?: boolean;   // נשלח כ־"true" / "false"
 }
 
 export interface EventFilters extends PageParams {
@@ -503,7 +528,7 @@ export interface ApiErrorBody {
 | 6 | GET | `/packages?eventType=` | ✘ | 🌐 | המחירון: חבילות פעילות, עם סינון רשות לפי סוג אירוע |
 | 7 | GET | `/gallery` | ✘ | 🌐 | גלריה, עם סינון ועמודים |
 | 8 | POST | `/gallery` | ✔ | 👑 | הוספת תמונה לגלריה |
-| 9 | DELETE | `/gallery/:id` | ✔ | 👑 | מחיקת תמונה מהגלריה |
+| 9 | DELETE | `/gallery/:id` | ✔ | 👑 | מחיקת תמונה מהגלריה לצמיתות |
 | 10 | GET | `/events` | ✔ | 👑 | כל האירועים: חיפוש, סינון, מיון ועמודים |
 | 11 | GET | `/events/my` | ✔ | 👤 | האירועים של המשתמש המחובר, בעמודים |
 | 12 | GET | `/events/:id` | ✔ | 👑 או בעלת האירוע | אירוע בודד עם תמונות |
@@ -520,8 +545,11 @@ export interface ApiErrorBody {
 | 23 | PUT | `/packages/:id` | ✔ | 👑 | **חדש:** עריכת חבילה: מחיר, פרטים, סוג, סדר, החזרה מארכיון |
 | 24 | DELETE | `/packages/:id` | ✔ | 👑 | **חדש:** העברת חבילה לארכיון (ללא מחיקה) |
 | 25 | GET | `/admin/packages` | ✔ | 👑 | **חדש:** כל החבילות לניהול, כולל ארכיון ומספר הזמנות |
+| 26 | PATCH | `/gallery/:id` | ✔ | 👑 | **חדש:** עריכת פריט גלריה: כותרת, סוג, פרסום/הסתרה, מובילה, סדר |
+| 27 | GET | `/gallery/summary` | ✘ | 🌐 | **חדש:** לכל סוג אירוע – מספר תמונות מפורסמות ותמונת שער |
+| 28 | GET | `/admin/gallery` | ✔ | 👑 | **חדש:** כל פריטי הגלריה לניהול, כולל מוסתרים |
 
-> המספרים 20–25 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא של 20 ו־21 נמצא בפרק 4.2, אחרי `GET /auth/me`, ושל 22–25 בפרק 4.3.
+> המספרים 20–28 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא של 20 ו־21 נמצא בפרק 4.2, אחרי `GET /auth/me`, של 22–25 בפרק 4.3, ושל 26–28 בפרק 4.4.
 
 **כללים שחלים על כל ה־Endpoints:**
 - **Path Parameters:** `:id` ו־`:photoId` חייבים להיות מספרים שלמים חיוביים. אחרת מתקבל `400 VALIDATION_ERROR` עם `field: "id"` (או `"photoId"`).
@@ -961,7 +989,14 @@ export interface ApiErrorBody {
 
 ---
 
-### 4.4 Gallery – גלריית עיצובים
+### 4.4 Gallery – גלריית עיצובים לפי סוג אירוע
+
+**איך זה בנוי:**
+- **גלריה לכל סוג אירוע:** כל פריט שייך לסוג (`category`). גלריה של סוג = `GET /gallery?category=<סוג>`.
+- **פרסום / הסתרה:** פריט מוסתר (`isPublished: false`) **לא מופיע באף נתיב ציבורי** (`GET /gallery`, `GET /gallery/summary`). המנהלת רואה אותו ב־`GET /admin/gallery`.
+- **תמונות מובילות:** `isFeatured: true`. לדף הבית: `GET /gallery?featured=true&limit=6`.
+- **סדר:** `sortOrder` (קטן קודם), ואז החדשים קודם.
+- **מחיקה מול הסתרה:** `DELETE` מוחק לצמיתות, כולל הקובץ. להסתרה זמנית משתמשים ב־`PATCH` עם `isPublished: false`.
 
 #### 7. `GET /gallery` 🌐
 
@@ -969,10 +1004,11 @@ export interface ApiErrorBody {
 | פרמטר | חובה | ערכים | ברירת מחדל | דוגמה |
 |---|---|---|---|---|
 | `category` | ✘ | EventType | הכול | `?category=BatMitzvah` |
+| `featured` | ✘ | `true` / `false` | הכול | `?featured=true` (תמונות מובילות בלבד) |
 | `page` | ✘ | מספר שלם, 1 ומעלה | `1` | `?page=2` |
 | `limit` | ✘ | מספר שלם, 1–100 (פריטים בעמוד) | `10` | `?limit=6` (למשל "עבודות נבחרות" בדף הבית) |
 
-**Response `200`:** `Paginated<GalleryItem>`, מהחדש לישן.
+**Response `200`:** `Paginated<GalleryItem>`: פריטים מפורסמים בלבד, לפי `sortOrder` ואז מהחדש לישן.
 ```json
 {
   "data": [
@@ -982,6 +1018,8 @@ export interface ApiErrorBody {
       "category": "BatMitzvah",
       "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
       "publicId": null,
+      "isFeatured": true,
+      "sortOrder": 0,
       "createdAt": "2026-10-05T10:00:00.000Z"
     }
   ],
@@ -994,7 +1032,7 @@ export interface ApiErrorBody {
 **שגיאות:**
 | HTTP | מתי |
 |---|---|
-| 400 | `category` לא תקין, `page` קטן מ־1, `limit` מחוץ לטווח 1–100, או מספר לא שלם |
+| 400 | `category` לא תקין, `featured` שאינו `true`/`false`, `page` קטן מ־1, `limit` מחוץ לטווח 1–100, או מספר לא שלם |
 
 > ⚠️ אל תשלחי פרמטר ריק כמו `?category=`. אם המשתמשת בחרה "הכול", פשוט אל תוסיפי את הפרמטר.
 
@@ -1008,8 +1046,13 @@ export interface ApiErrorBody {
 | `image` | File | ✔ | קובץ אחד: JPEG, PNG או WEBP, עד 5MB |
 | `title` | string | ✔ | 2–120 תווים |
 | `category` | string | ✔ | EventType |
+| `isPublished` | `"true"` / `"false"` | ✘ | ברירת מחדל `"true"`. `"false"` = העלאה כטיוטה מוסתרת |
+| `isFeatured` | `"true"` / `"false"` | ✘ | ברירת מחדל `"false"` |
+| `sortOrder` | מספר שלם כמחרוזת | ✘ | `"0"`–`"1000"`, ברירת מחדל `"0"` |
 
-**Response `201`:** `GalleryItem`
+> ב־FormData כל הערכים הם מחרוזות: `form.append('isFeatured', 'true')`.
+
+**Response `201`:** `AdminGalleryItem`
 ```json
 {
   "id": 11,
@@ -1017,16 +1060,20 @@ export interface ApiErrorBody {
   "category": "BatMitzvah",
   "url": "https://res.cloudinary.com/<cloud>/image/upload/v1792909845/eventstyle/gallery/abc123.jpg",
   "publicId": "eventstyle/gallery/abc123",
-  "createdAt": "2026-10-25T09:30:00.000Z"
+  "isFeatured": false,
+  "sortOrder": 0,
+  "isPublished": true,
+  "createdAt": "2026-10-25T09:30:00.000Z",
+  "updatedAt": "2026-10-25T09:30:00.000Z"
 }
 ```
 
 **שגיאות:** 400, 401, 403, 413, 415, 502, 503. פירוט בפרק 5.4.
 
-#### 9. `DELETE /gallery/:id` 👑
+#### 9. `DELETE /gallery/:id` 👑 – מחיקה לצמיתות
 
 - **Path:** `id`, מזהה הפריט.
-- **Response `204`:** בלי גוף. התמונה נמחקת גם מ־Cloudinary.
+- **Response `204`:** בלי גוף. התמונה נמחקת גם מ־Cloudinary, ואי אפשר לשחזר אותה. **להסתרה בלי מחיקה** השתמשי ב־`PATCH` עם `isPublished: false`.
 
 **שגיאות:**
 | HTTP | מתי |
@@ -1034,6 +1081,51 @@ export interface ApiErrorBody {
 | 400 | `id` לא מספר |
 | 401 / 403 | לא מחובר, או לא Admin |
 | 404 | `Gallery item not found` |
+
+#### 26. `PATCH /gallery/:id` 👑 – עריכת פריט גלריה
+
+**Request Body (JSON):** `GalleryUpdate`, לפחות שדה אחד. שדה שלא נשלח לא משתנה, **והקובץ עצמו לא משתנה**.
+| שדה | טיפוס | כללים |
+|---|---|---|
+| `title` | string | 2–120 תווים |
+| `category` | EventType | העברת התמונה לגלריה של סוג אחר |
+| `isPublished` | boolean | `false` = הסתרה מכל הנתיבים הציבוריים, `true` = פרסום |
+| `isFeatured` | boolean | תמונה מובילה |
+| `sortOrder` | integer | 0–1000 |
+
+```json
+{ "isPublished": false }
+```
+
+**Response `200`:** `AdminGalleryItem` המעודכן.
+
+**שגיאות:** `400` (גוף ריק, ערך לא תקין, או שדה לא מוכר כמו `url`), `401`, `403`, `404 Gallery item not found`.
+
+#### 27. `GET /gallery/summary` 🌐 – סיכום הגלריות
+
+לדף "הגלריות שלנו": שורה אחת **לכל אחד מ־5 סוגי האירועים**, תמיד באותו סדר.
+- `count`: מספר התמונות **המפורסמות** בסוג.
+- `cover`: תמונה מובילה אם יש, אחרת הראשונה לפי הסדר. **`null` כשאין תמונות מפורסמות** – הציגי מצב ריק או הסתירי את הסוג.
+
+```json
+[
+  { "category": "Birthday", "count": 0, "cover": null },
+  { "category": "BatMitzvah", "count": 2, "cover": { "id": 3, "title": "בת מצווה בגווני זהב ולבן", "category": "BatMitzvah", "url": "https://...", "publicId": null, "isFeatured": true, "sortOrder": 0, "createdAt": "2026-10-05T10:00:00.000Z" } }
+]
+```
+
+#### 28. `GET /admin/gallery` 👑 – כל פריטי הגלריה לניהול
+
+| פרמטר | ערכים |
+|---|---|
+| `category` | EventType |
+| `isPublished` | `true` / `false` |
+| `isFeatured` | `true` / `false` |
+| `page`, `limit` | כמו ב־`GET /gallery` |
+
+**Response `200`:** `Paginated<AdminGalleryItem>`, כולל פריטים מוסתרים, באותו סדר כמו הגלריה הציבורית.
+
+**אחרי פעולת ניהול:** טעני מחדש את `GET /admin/gallery`. אם באותו מסך מוצגת גם הגלריה הציבורית או הסיכום – טעני גם אותם.
 
 ---
 
@@ -1349,9 +1441,9 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | הרשאה | 👑 Admin | 👑 Admin |
 | סוג הבקשה | `multipart/form-data` | `multipart/form-data` |
 | שדה הקובץ | `image`: **קובץ אחד** | `photos`: **1–10 קבצים** באותו שם שדה |
-| שדות נוספים | `title`, `category` (חובה) | אין |
+| שדות נוספים | `title`, `category` (חובה). `isPublished`, `isFeatured`, `sortOrder` (רשות) | אין |
 | תיקייה ב־Cloudinary | `eventstyle/gallery` | `eventstyle/events/<id>` |
-| תגובה | `201` + `GalleryItem` | `201` + `EventPhoto[]` |
+| תגובה | `201` + `AdminGalleryItem` | `201` + `EventPhoto[]` |
 | מחיקה | `DELETE /gallery/:id` | `DELETE /events/:id/photos/:photoId` |
 
 ### 5.2 מגבלות קבצים
@@ -1362,6 +1454,7 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | גודל מקסימלי | 5MB **לכל קובץ** |
 | מספר קבצים | עד 10 בבקשה אחת (רק בתמונות אירוע) |
 | בדיקת תוכן | השרת בודק את "חתימת הקובץ". קובץ ששמו `.png` אבל הוא לא באמת תמונה יידחה עם 415 |
+| עיבוד מחדש | כל תמונה מסובבת לפי כיוון ה־EXIF, מוקטנת עד 2500 פיקסלים בצלע הארוכה, ומקודדת מחדש **בלי מטא־דאטה** (כולל מיקום GPS). תמונה שלא ניתן לפענח נדחית עם 415, ותמונה עם יותר מדי פיקסלים עם 413 |
 
 - **בדיקה מוקדמת:** כדאי לבדוק סוג וגודל כבר בצד הלקוח, לפני השליחה, כדי לחסוך המתנה.
 - **סינון בבחירת קבצים:** `<input type="file" accept="image/jpeg,image/png,image/webp">` מסנן את הקבצים כבר בחלון הבחירה.
@@ -1371,7 +1464,7 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 1. **אל תגדירי `Content-Type`.** הדפדפן מגדיר אותו לבד, יחד עם ה־`boundary`. אם תגדירי `multipart/form-data` ידנית, השרת לא יצליח לקרוא את הקובץ.
 2. שמות השדות חייבים להיות **בדיוק** `image` (גלריה) או `photos` (אירוע). שם אחר יחזיר `400 Upload error: Unexpected file field`.
 3. בתמונות אירוע מוסיפים כל קובץ בנפרד, עם אותו שם שדה: `formData.append('photos', file)` בלולאה.
-4. ב־`POST /gallery` אסור לשלוח שדות טקסט חוץ מ־`title` ו־`category`. שדה מיותר יחזיר 400.
+4. ב־`POST /gallery` מותר לשלוח רק את שדות הטקסט `title`, `category`, `isPublished`, `isFeatured` ו־`sortOrder`. שדה אחר יחזיר 400.
 5. ההעלאה היא "הכול או כלום": אם אחת התמונות נכשלת, אף תמונה לא נשמרת.
 
 ### 5.4 שגיאות העלאה
@@ -1387,6 +1480,7 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | 3. שם שדה שגוי / יותר מ־10 קבצים | 400 | `VALIDATION_ERROR` | `Upload error: Unexpected file field` או `Upload error: Too many files` |
 | 3. אין קובץ | 400 | `VALIDATION_ERROR` | `Image file is required in field "image"` / `At least one image file is required in field "photos"` |
 | 4. חתימת קובץ | 415 | `UNSUPPORTED_FILE_TYPE` | `File "x.png" is not a valid image/png image` |
+| 4. עיבוד התמונה | 415 / 413 | `UNSUPPORTED_FILE_TYPE` / `FILE_TOO_LARGE` | `File "x.jpg" could not be processed as an image` / `Image "x.jpg" has too many pixels` |
 | 5. שדות טקסט (גלריה) | 400 | `VALIDATION_ERROR` | `details: [{ "field": "title", ... }]` |
 | 6. האירוע לא קיים | 404 | `NOT_FOUND` | `Event not found` |
 | 7. Cloudinary לא מוגדר בשרת | 503 | `STORAGE_NOT_CONFIGURED` | `Image storage is not configured on the server ...` |
@@ -1395,6 +1489,7 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 ### 5.5 הצגת תמונות ב־React
 
 - **השדה להצגה:** `url`. כתובת `https` מלאה, ציבורית. אפשר לשים אותה ישירות ב־`<img src>`, בלי Token.
+- **שימי לב:** "מוסתרת" (`isPublished: false`) פירושו שהתמונה לא מופיעה בנתיבים הציבוריים. הקובץ עצמו עדיין נגיש למי שמחזיק את הקישור – הסתרה אינה הגנה על תמונה פרטית.
 - **`publicId`:** מזהה פנימי של Cloudinary. לא צריך אותו לתצוגה או למחיקה, כי המחיקה נעשית לפי `id`.
 - **נתוני ה־Seed:** תמונות הגלריה וחבילות ה־Seed משתמשות בכתובות `picsum.photos` עם `publicId: null`. הן מוצגות בדיוק באותה דרך.
 - **`coverImageUrl` של אירוע:** טקסט חופשי (כתובת URL) שהמנהלת מזינה בטופס. **אין Endpoint נפרד להעלאת תמונת שער.** אפשרות אחת: להעלות תמונה לאירוע ואז להעתיק את ה־`url` שלה ל־`coverImageUrl` בעריכה.
@@ -2060,8 +2155,9 @@ function AdminEventsTable() {
 
 | מסך (נתיב מוצע) | מטרה | Endpoints | נתונים להצגה | פעולות המשתמש | הרשאה |
 |---|---|---|---|---|---|
-| **דף הבית** `/` | היכרות עם הסטודיו | `GET /gallery?limit=6`, `GET /packages` | עבודות נבחרות (`data[].url`, `data[].title`), תקציר חבילות (`name`, `price`) | מעבר לגלריה, לחבילות, להרשמה או להתחברות | 🌐 |
-| **גלריה** `/gallery` | הצגת עבודות לפי סוג אירוע | `GET /gallery?category=...&page=...&limit=...` | תמונות (`url`, `title`, `category` בעברית) + פקדי עמודים או "טען עוד" | סינון לפי קטגוריה ("הכול" = בלי פרמטר), מעבר בין עמודים | 🌐 |
+| **דף הבית** `/` | היכרות עם הסטודיו | `GET /gallery?featured=true&limit=6`, `GET /packages` | עבודות נבחרות (`data[].url`, `data[].title`), תקציר חבילות (`name`, `price`) | מעבר לגלריה, לחבילות, להרשמה או להתחברות | 🌐 |
+| **הגלריות** `/gallery` | בחירת גלריה לפי סוג אירוע | `GET /gallery/summary` | כרטיס לכל סוג: `cover.url`, שם הסוג בעברית, `count`. סוג עם `cover: null` – מצב ריק או הסתרה | מעבר לגלריה של סוג | 🌐 |
+| **גלריה של סוג** `/gallery/:category` | הצגת עבודות של סוג אירוע | `GET /gallery?category=...&page=...&limit=...` | תמונות (`url`, `title`) + פקדי עמודים או "טען עוד" | מעבר בין עמודים | 🌐 |
 | **חבילות** `/packages` | מחירון לפי סוג אירוע | `GET /packages?eventType=...` | בחירת סוג אירוע, ואז `name`, `description`, `price`, `features[]`, `imageUrl`. חלוקה ל"חבילות הסוג" ו"חבילות כלליות" לפי `eventType`. הסבר שהזמנה נעשית ביצירת קשר | בחירת סוג אירוע | 🌐 |
 | **ניהול חבילות** `/admin/packages` | ניהול המחירון | `GET /admin/packages`, `POST /packages`, `PUT /packages/:id`, `DELETE /packages/:id` | טבלה: שם, סוג (או "כללית"), מחיר, `sortOrder`, פעילה/ארכיון, `eventCount` | יצירה, עריכה ועדכון מחיר, שינוי סדר, העברה לארכיון והחזרה | 👑 |
 | **הרשמה** `/register` | פתיחת חשבון לקוחה | `POST /auth/register`, `POST /auth/google` | טופס: `fullName`, `email`, `phone`, `password` + שגיאות שדה, וכפתור "המשך עם Google" | שליחת טופס ואז מעבר לאימות, או הרשמה עם Google | 🌐 |
@@ -2074,7 +2170,7 @@ function AdminEventsTable() {
 | **ניהול אירועים** `/admin/events` | טבלת כל האירועים | `GET /events?...&page=...&limit=...`, `GET /packages` (למסנן החבילה), `PATCH /events/:id/status`, `DELETE /events/:id` | טבלה: שם אירוע, לקוח, תאריך, סוג, חבילה, תקציב, סטטוס, מספר תמונות + "עמוד X מתוך Y" ו־`totalItems` | חיפוש, סינון (סוג, סטטוס, חבילה), מיון (תאריך, תקציב, שם לקוח), מעבר בין עמודים, שינוי סטטוס, מחיקה, מעבר ליצירה או עריכה | 👑 |
 | **אירוע חדש** `/admin/events/new` | יצירת אירוע | `GET /packages`, `POST /events` | טופס עם כל שדות `EventInput` | שמירה | 👑 |
 | **עריכת אירוע** `/admin/events/:id/edit` | עריכה וניהול תמונות | `GET /events/:id`, `GET /packages`, `PUT /events/:id`, `POST /events/:id/photos`, `DELETE /events/:id/photos/:photoId` | טופס מלא עם הערכים הקיימים (כולל `notes`), תמונות האירוע | שמירה, העלאת תמונות, מחיקת תמונה | 👑 |
-| **ניהול גלריה** `/admin/gallery` | הוספה ומחיקה של עבודות | `GET /gallery?page=...`, `POST /gallery`, `DELETE /gallery/:id` | רשת תמונות + פקדי עמודים + טופס הוספה (`image`, `title`, `category`) | העלאה, מחיקה, מעבר בין עמודים | 👑 |
+| **ניהול גלריה** `/admin/gallery` | ניהול כל העבודות | `GET /admin/gallery?...`, `POST /gallery`, `PATCH /gallery/:id`, `DELETE /gallery/:id` | רשת תמונות כולל מוסתרות (סימון "מוסתרת" לפי `isPublished`, "מובילה" לפי `isFeatured`), סינון לפי סוג/פרסום/מובילה, פקדי עמודים, טופס הוספה (`image`, `title`, `category` + רשות) | העלאה, עריכת כותרת וסוג, פרסום/הסתרה, סימון מובילה, שינוי סדר, מחיקה לצמיתות | 👑 |
 | **אין הרשאה / לא נמצא** | הודעה כשהשרת מחזיר 403 או 404 | – | הודעה וקישור חזרה | – | – |
 
 ### 8.2 עדכון המסך אחרי שינוי
@@ -2087,7 +2183,8 @@ function AdminEventsTable() {
 | מחיקת אירוע | `204` | הסרת השורה לפי `id` |
 | העלאת תמונות | `201` + מערך התמונות החדשות | הוספה לסוף מערך `photos` |
 | מחיקת תמונה | `204` | הסרה מ־`photos` לפי `id` |
-| הוספה לגלריה | `201` + הפריט החדש | הוספה **לתחילת** הרשימה (הגלריה ממוינת מהחדש לישן) |
+| הוספה לגלריה | `201` + הפריט החדש | טעינה מחדש של `GET /admin/gallery` (המיקום תלוי ב־`sortOrder`) |
+| עריכת פריט גלריה | `200` + הפריט המעודכן | החלפת הפריט לפי `id`. אם השתנו `sortOrder`, `category` או `isPublished` – טעינה מחדש של הרשימה |
 | מחיקה מהגלריה | `204` | הסרה לפי `id` |
 | אימות אימייל | `200` + Token ומשתמש חדשים | שמירת ה־Token וטעינה מחדש של `/events/my` |
 | התחברות עם Google | `200` + Token, משתמש ו־`isNewUser` | שמירת ה־Token והמשתמש, כמו בהתחברות רגילה |
@@ -2131,7 +2228,8 @@ function AdminEventsTable() {
 | **הזמנה או בקשת שירות של לקוחה** | אין. **רק המנהלת יוצרת אירועים** | – |
 | **טופס "צור קשר"** | אין | – |
 | **שליחת מיילים** (קוד אימות, התראות) | אין. אין שירות מיילים חיצוני; קוד האימות מודפס ביומן השרת | לא להבטיח למשתמשת שתקבל מייל |
-| **עריכת פריט גלריה** (שינוי כותרת או קטגוריה) | אין. רק הוספה ומחיקה | מחיקה והוספה מחדש |
+| **החלפת הקובץ של פריט גלריה** | אין. `PATCH` משנה רק פרטים | העלאת פריט חדש ומחיקת הישן |
+| **העלאת תמונות על ידי לקוחה** | אין עדיין. רק המנהלת מעלה תמונות | – |
 | **העלאת תמונת שער (`coverImageUrl`)** | אין Endpoint נפרד. זה שדה טקסט (URL) | הזנת כתובת, או העתקת `url` של תמונת אירוע שהועלתה |
 | **חיפוש בשדות נוספים** | החיפוש הוא רק בשם האירוע ובשם הלקוח | – |
 

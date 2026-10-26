@@ -575,12 +575,15 @@
       },
       "GalleryItem": {
         "type": "object",
+        "description": "פריט בגלריה הציבורית. נתיבים ציבוריים מחזירים רק פריטים מפורסמים.",
         "required": [
           "id",
           "title",
           "category",
           "url",
           "publicId",
+          "isFeatured",
+          "sortOrder",
           "createdAt"
         ],
         "properties": {
@@ -600,6 +603,15 @@
             "type": "string",
             "nullable": true
           },
+          "isFeatured": {
+            "type": "boolean",
+            "description": "Featured image (home page, gallery cover)"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Display order (then newest first)"
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -611,7 +623,119 @@
           "category": "BatMitzvah",
           "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
           "publicId": null,
+          "isFeatured": true,
+          "sortOrder": 0,
           "createdAt": "2026-10-05T10:00:00.000Z"
+        }
+      },
+      "AdminGalleryItem": {
+        "description": "פריט גלריה בממשק הניהול – כולל מצב הפרסום",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GalleryItem"
+          },
+          {
+            "type": "object",
+            "required": [
+              "isPublished",
+              "updatedAt"
+            ],
+            "properties": {
+              "isPublished": {
+                "type": "boolean",
+                "description": "false = hidden from every public endpoint (the file stays in storage)"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ],
+        "example": {
+          "id": 3,
+          "title": "בת מצווה בגווני זהב",
+          "category": "BatMitzvah",
+          "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+          "publicId": null,
+          "isFeatured": true,
+          "sortOrder": 0,
+          "createdAt": "2026-10-05T10:00:00.000Z",
+          "isPublished": true,
+          "updatedAt": "2026-10-27T12:00:00.000Z"
+        }
+      },
+      "GalleryUpdateInput": {
+        "type": "object",
+        "description": "לפחות שדה אחד. הקובץ עצמו לא משתנה. שדות לא מוכרים (למשל url) נדחים.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "category": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "isPublished": {
+            "type": "boolean"
+          },
+          "isFeatured": {
+            "type": "boolean"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          }
+        },
+        "example": {
+          "title": "בת מצווה בגווני זהב ולבן",
+          "isFeatured": true,
+          "sortOrder": 1
+        }
+      },
+      "GallerySummaryItem": {
+        "type": "object",
+        "required": [
+          "category",
+          "count",
+          "cover"
+        ],
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Published items only"
+          },
+          "cover": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GalleryItem"
+              }
+            ],
+            "nullable": true,
+            "description": "A featured item if there is one, otherwise the first by order. null when the category is empty"
+          }
+        },
+        "example": {
+          "category": "BatMitzvah",
+          "count": 2,
+          "cover": {
+            "id": 3,
+            "title": "בת מצווה בגווני זהב",
+            "category": "BatMitzvah",
+            "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+            "publicId": null,
+            "isFeatured": true,
+            "sortOrder": 0,
+            "createdAt": "2026-10-05T10:00:00.000Z"
+          }
         }
       },
       "EventPhoto": {
@@ -2226,6 +2350,7 @@
           "Gallery"
         ],
         "summary": "גלריית עיצובים, עם סינון לפי קטגוריה וחלוקה לעמודים (Guest)",
+        "description": "רק פריטים מפורסמים. סדר: sortOrder, ואז החדשים קודם.",
         "parameters": [
           {
             "name": "category",
@@ -2235,6 +2360,19 @@
               "$ref": "#/components/schemas/EventType"
             },
             "description": "Filter by event type"
+          },
+          {
+            "name": "featured",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "true = featured items only"
           },
           {
             "name": "page",
@@ -2262,7 +2400,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Newest first, paginated",
+            "description": "Published items, paginated",
             "content": {
               "application/json": {
                 "schema": {
@@ -2291,6 +2429,8 @@
                       "category": "BatMitzvah",
                       "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
                       "publicId": null,
+                      "isFeatured": true,
+                      "sortOrder": 0,
                       "createdAt": "2026-10-05T10:00:00.000Z"
                     }
                   ],
@@ -2333,7 +2473,7 @@
           "Gallery"
         ],
         "summary": "הוספת תמונה לגלריה (Admin)",
-        "description": "multipart/form-data. קובץ אחד בשדה image. סוגים: image/jpeg, image/png, image/webp. עד 5MB.",
+        "description": "multipart/form-data. קובץ אחד בשדה image. סוגים: image/jpeg, image/png, image/webp. עד 5MB.\n\nהתמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד 2500px והסרת כל המטא-דאטה (כולל GPS).\n\nשדות רשות (טקסט): isPublished (\"true\"/\"false\", ברירת מחדל true), isFeatured (ברירת מחדל false), sortOrder (ברירת מחדל 0).",
         "security": [
           {
             "bearerAuth": []
@@ -2362,6 +2502,25 @@
                   },
                   "category": {
                     "$ref": "#/components/schemas/EventType"
+                  },
+                  "isPublished": {
+                    "type": "string",
+                    "enum": [
+                      "true",
+                      "false"
+                    ]
+                  },
+                  "isFeatured": {
+                    "type": "string",
+                    "enum": [
+                      "true",
+                      "false"
+                    ]
+                  },
+                  "sortOrder": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "0–1000"
                   }
                 }
               }
@@ -2374,7 +2533,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GalleryItem"
+                  "$ref": "#/components/schemas/AdminGalleryItem"
                 },
                 "example": {
                   "id": 3,
@@ -2382,7 +2541,11 @@
                   "category": "BatMitzvah",
                   "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
                   "publicId": null,
-                  "createdAt": "2026-10-05T10:00:00.000Z"
+                  "isFeatured": true,
+                  "sortOrder": 0,
+                  "createdAt": "2026-10-05T10:00:00.000Z",
+                  "isPublished": true,
+                  "updatedAt": "2026-10-27T12:00:00.000Z"
                 }
               }
             }
@@ -2508,12 +2671,187 @@
         }
       }
     },
+    "/api/gallery/summary": {
+      "get": {
+        "tags": [
+          "Gallery"
+        ],
+        "summary": "סיכום הגלריות: לכל סוג אירוע – מספר תמונות מפורסמות ותמונת שער (Guest)",
+        "description": "תמיד 5 שורות, אחת לכל סוג אירוע. פריטים מוסתרים לא נספרים ולא נבחרים כשער. סוג ריק: count=0, cover=null.",
+        "responses": {
+          "200": {
+            "description": "One row per event type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GallerySummaryItem"
+                  }
+                },
+                "example": [
+                  {
+                    "category": "Birthday",
+                    "count": 0,
+                    "cover": null
+                  },
+                  {
+                    "category": "BatMitzvah",
+                    "count": 2,
+                    "cover": {
+                      "id": 3,
+                      "title": "בת מצווה בגווני זהב",
+                      "category": "BatMitzvah",
+                      "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+                      "publicId": null,
+                      "isFeatured": true,
+                      "sortOrder": 0,
+                      "createdAt": "2026-10-05T10:00:00.000Z"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/gallery/{id}": {
+      "patch": {
+        "tags": [
+          "Gallery"
+        ],
+        "summary": "עריכת פריט גלריה: כותרת, סוג, פרסום / הסתרה, מובילה, סדר (Admin)",
+        "description": "שדה שלא נשלח לא משתנה. הסתרה (isPublished=false) לא מוחקת את הקובץ.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Gallery item id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GalleryUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminGalleryItem"
+                },
+                "example": {
+                  "id": 3,
+                  "title": "בת מצווה בגווני זהב",
+                  "category": "BatMitzvah",
+                  "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+                  "publicId": null,
+                  "isFeatured": true,
+                  "sortOrder": 0,
+                  "createdAt": "2026-10-05T10:00:00.000Z",
+                  "isPublished": true,
+                  "updatedAt": "2026-10-27T12:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gallery item not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Gallery item not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Gallery"
         ],
-        "summary": "מחיקת תמונה מהגלריה (Admin)",
+        "summary": "מחיקת תמונה מהגלריה לצמיתות, כולל הקובץ באחסון (Admin)",
+        "description": "להסתרה בלי מחיקה: PATCH עם isPublished=false.",
         "security": [
           {
             "bearerAuth": []
@@ -2601,6 +2939,179 @@
                   "error": {
                     "code": "NOT_FOUND",
                     "message": "Event not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/gallery": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "כל פריטי הגלריה לניהול, כולל מוסתרים (Admin)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/EventType"
+            }
+          },
+          {
+            "name": "isPublished",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "isFeatured",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number (starts at 1)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            },
+            "description": "Items per page (max 100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All gallery items, paginated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "pagination"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AdminGalleryItem"
+                      }
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/Pagination"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": 3,
+                      "title": "בת מצווה בגווני זהב",
+                      "category": "BatMitzvah",
+                      "url": "https://picsum.photos/seed/eventstyle-gallery-3/1200/800",
+                      "publicId": null,
+                      "isFeatured": true,
+                      "sortOrder": 0,
+                      "createdAt": "2026-10-05T10:00:00.000Z",
+                      "isPublished": true,
+                      "updatedAt": "2026-10-27T12:00:00.000Z"
+                    }
+                  ],
+                  "pagination": {
+                    "page": 1,
+                    "limit": 10,
+                    "totalItems": 1,
+                    "totalPages": 1
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
                   }
                 }
               }
@@ -3611,7 +4122,7 @@
           "Event Photos"
         ],
         "summary": "העלאת תמונות לאירוע (Admin)",
-        "description": "multipart/form-data. 1–10 קבצים בשדה photos. סוגים: image/jpeg, image/png, image/webp. עד 5MB לקובץ.",
+        "description": "multipart/form-data. 1–10 קבצים בשדה photos. סוגים: image/jpeg, image/png, image/webp. עד 5MB לקובץ.\n\nכל תמונה מעובדת מחדש לפני השמירה: סיבוב לפי EXIF, הקטנה עד 2500px והסרת כל המטא-דאטה (כולל GPS).",
         "security": [
           {
             "bearerAuth": []

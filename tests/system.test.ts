@@ -43,7 +43,7 @@ describe('Swagger / OpenAPI', () => {
     await expect(SwaggerParser.validate(copy)).resolves.toBeTruthy();
   });
 
-  it('documents all 25 operations (17 required + 2 email verification + Google sign-in + profile edit + 4 package management)', () => {
+  it('documents all 28 operations (17 required + 2 email verification + Google sign-in + profile edit + 4 package management + 3 gallery management)', () => {
     const operations = Object.entries(openApiDocument.paths).flatMap(([path, methods]) =>
       Object.keys(methods).map((method) => `${method.toUpperCase()} ${path}`),
     );
@@ -64,6 +64,9 @@ describe('Swagger / OpenAPI', () => {
         'GET /api/gallery',
         'POST /api/gallery',
         'DELETE /api/gallery/{id}',
+        'PATCH /api/gallery/{id}',
+        'GET /api/gallery/summary',
+        'GET /api/admin/gallery',
         'GET /api/events',
         'GET /api/events/my',        'GET /api/events/{id}',
         'POST /api/events',

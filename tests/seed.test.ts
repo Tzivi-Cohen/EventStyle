@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { DEMO_TYPE_PACKAGES, seed, seedOptionsFromEnv, type SeedOptions } from '../prisma/seed';
-import { prisma } from './helpers';
+import { signAccessToken } from '../src/auth/jwt';
+import { api, prisma } from './helpers';
 
 /** מסד ריק לגמרי (בלי החבילות שה-helpers יוצרים) – כמו הקמה ראשונה */
 async function emptyDatabase() {
@@ -55,6 +56,36 @@ describe('Seed in Production', () => {
     expect(await prisma.user.count()).toBe(0);
   });
 
+  it('does not publish demo prices: the general packages are created archived and the public price list is empty', async () => {
+    await seed(prisma, production);
+    const packages = await prisma.package.findMany();
+    expect(packages).toHaveLength(3);
+    expect(packages.every((pkg) => !pkg.isActive && pkg.eventType === null)).toBe(true);
+
+    const publicList = await api.get('/api/packages');
+    expect(publicList.status).toBe(200);
+    expect(publicList.body).toEqual([]);
+  });
+
+  it('the admin can set a real price and activate an archived package', async () => {
+    await seed(prisma, production);
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: production.adminEmail } });
+    const auth = `Bearer ${signAccessToken(admin)}`;
+    const basic = await prisma.package.findFirstOrThrow({ where: { name: 'Basic', eventType: null } });
+
+    await api
+      .put(`/api/packages/${basic.id}`)
+      .set('Authorization', auth)
+      .send({
+        name: 'Basic', description: basic.description, price: 1650, features: basic.features,
+        imageUrl: basic.imageUrl, eventType: null, isActive: true,
+      })
+      .expect(200);
+
+    const publicList = await api.get('/api/packages');
+    expect(publicList.body.map((p: { name: string; price: number }) => [p.name, p.price])).toEqual([['Basic', 1650]]);
+  });
+
   it('never touches existing production data (repeated deploys)', async () => {
     await seed(prisma, production);
     // נתונים "אמיתיים" שהמנהלת יצרה
@@ -104,6 +135,8 @@ describe('Seed in development', () => {
     }
     // אירועי ההדגמה משויכים לחבילות כלליות – בלי חוסר התאמה לסוג
     expect(await prisma.event.count({ where: { package: { eventType: { not: null } } } })).toBe(0);
+    // בפיתוח ההתנהגות לא השתנתה: החבילות הכלליות פעילות
+    expect(await prisma.package.count({ where: { eventType: null, isActive: true } })).toBe(3);
   });
 
   it('SEED_DEMO_PACKAGES=false skips the demo packages', async () => {

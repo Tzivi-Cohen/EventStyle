@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { HttpError } from '../errors/HttpError';
+import { sanitizeImage } from '../services/storage/imageProcessing';
 
 export const MAX_FILE_SIZE_MB = 5;
 export const MAX_FILES_PER_REQUEST = 10;
@@ -67,22 +68,24 @@ function verifyFiles(files: Express.Multer.File[]) {
   }
 }
 
-/** קובץ תמונה יחיד בשדה fieldName (חובה) */
+/**
+ * קובץ תמונה יחיד בשדה fieldName (חובה).
+ * סדר הבדיקות: סוג וגודל (multer) → חתימת הקובץ → עיבוד מחדש והסרת מטא-דאטה (sanitizeImage).
+ */
 export const uploadSingleImage =
   (fieldName: string) => (req: Request, res: Response, next: NextFunction) => {
     multerInstance.single(fieldName)(req, res, (err: unknown) => {
       if (err) return next(err);
       if (!req.file) return next(HttpError.badRequest(`Image file is required in field "${fieldName}"`));
-      try {
-        verifyFiles([req.file]);
-        next();
-      } catch (error) {
-        next(error);
-      }
+      const file = req.file;
+      void (async () => {
+        verifyFiles([file]);
+        req.file = await sanitizeImage(file);
+      })().then(() => next(), next);
     });
   };
 
-/** עד MAX_FILES_PER_REQUEST תמונות בשדה fieldName (לפחות אחת) */
+/** עד MAX_FILES_PER_REQUEST תמונות בשדה fieldName (לפחות אחת). אותן בדיקות כמו בקובץ יחיד */
 export const uploadManyImages =
   (fieldName: string) => (req: Request, res: Response, next: NextFunction) => {
     multerInstance.array(fieldName, MAX_FILES_PER_REQUEST)(req, res, (err: unknown) => {
@@ -91,11 +94,12 @@ export const uploadManyImages =
       if (files.length === 0) {
         return next(HttpError.badRequest(`At least one image file is required in field "${fieldName}"`));
       }
-      try {
+      void (async () => {
         verifyFiles(files);
-        next();
-      } catch (error) {
-        next(error);
-      }
+        // אחת אחרי השנייה – כדי לא להעמיס זיכרון ו-CPU בבקשה עם הרבה קבצים
+        const sanitized: Express.Multer.File[] = [];
+        for (const file of files) sanitized.push(await sanitizeImage(file));
+        req.files = sanitized;
+      })().then(() => next(), next);
     });
   };

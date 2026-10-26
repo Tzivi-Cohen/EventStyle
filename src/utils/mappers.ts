@@ -77,7 +77,18 @@ export function toGalleryDto(item: GalleryItem) {
     category: item.category,
     url: item.url,
     publicId: item.publicId,
+    isFeatured: item.isFeatured,
+    sortOrder: item.sortOrder,
     createdAt: item.createdAt.toISOString(),
+  };
+}
+
+/** פריט גלריה בממשק הניהול: גם מצב הפרסום ותאריך העדכון */
+export function toAdminGalleryDto(item: GalleryItem) {
+  return {
+    ...toGalleryDto(item),
+    isPublished: item.isPublished,
+    updatedAt: item.updatedAt.toISOString(),
   };
 }
 
