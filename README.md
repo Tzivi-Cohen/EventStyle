@@ -219,7 +219,7 @@ npm run dev                   # http://localhost:4000
 
 ```bash
 cp .env.test.example .env.test   # TEST_DATABASE_URL = מסד בדיקות נפרד
-npm test                         # 408 בדיקות אוטומטיות
+npm test                         # 410 בדיקות אוטומטיות
 npm run typecheck                # TypeScript
 npm run build                    # Build
 npm run check                    # הכול יחד: prisma validate + typecheck + build + tests
@@ -295,7 +295,7 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 | בקשות לעיצוב, אישור ודחייה בידי המנהלת, ניהול אירועים | ✅ |
 | מחירונים, גלריות, תמונות פרטיות, הסכמה ופרסום לגלריה | ✅ |
 | Status Codes ופורמט שגיאה אחיד | ✅ |
-| בדיקות אוטומטיות (408) מול מסד בדיקות נפרד | ✅ |
+| בדיקות אוטומטיות (410) מול מסד בדיקות נפרד | ✅ |
 | קובצי פריסה ל־Render והוראות | ✅ מוכנים |
 | פריסה בפועל ובדיקה בענן | ⏳ טרם בוצעו |
 

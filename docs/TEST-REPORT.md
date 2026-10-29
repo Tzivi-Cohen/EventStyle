@@ -14,13 +14,13 @@
 | Migrations | `prisma migrate status` | ✅ 8 מתוך 8 הוחלו, "Database schema is up to date" |
 | TypeScript | `tsc --noEmit` (strict) | ✅ 0 שגיאות |
 | Build | `npm run build` | ✅ הצליח |
-| בדיקות אוטומטיות | `npm test` (`vitest run`) | ✅ **408/408** (15 קבצים), 0 נכשלו |
+| בדיקות אוטומטיות | `npm test` (`vitest run`) | ✅ **410/410** (16 קבצים), 0 נכשלו |
 | Swagger / OpenAPI | בדיקה אוטומטית ב־`tests/system.test.ts` | ✅ OpenAPI 3.0.3 תקין, **35 פעולות**, כולן רשומות בשרת, וכל פעולה מוגנת מחזירה 401 לאורח |
 | התאמת צד הלקוח ל־Swagger | השוואת כל הקריאות ב־`EventStyle-Client/src/api` מול `docs/openapi.json` | ✅ 35/35, אין קריאה ל־Endpoint שאינו ב־Swagger |
 | חולשות ידועות | `npm audit` (ללא `fix`), שרת ולקוח | ✅ 0 |
 | סודות ב־Git | סריקה מול ערכי `.env` האמיתיים ודפוסי סודות | ✅ לא נמצא סוד (פירוט בהמשך) |
 
-## פירוט הבדיקות האוטומטיות (408)
+## פירוט הבדיקות האוטומטיות (410)
 
 | קובץ | בדיקות | מה נבדק |
 |---|---|---|
@@ -38,6 +38,7 @@
 | `tests/pagination.test.ts` | 20 | ברירות מחדל, עמוד אחרי הסוף, ערכים לא תקינים, סדר יציב בין עמודים, שילוב עם סינון ומיון |
 | `tests/seed.test.ts` | 10 | ב־Production לא נוצר אף נתון הדגמה, החבילות הכלליות נוצרות בארכיון, נתוני Production לא משתנים בפריסות חוזרות, Seed בפיתוח בלי דריסת נתונים |
 | `tests/private-storage.test.ts` | 30 | שכבת האחסון: העלאה ציבורית / פרטית, קישור חתום ותפוגתו, אי־חשיפת ה־API Secret, `copyToPublic` וכשליו (502), מחיקה עם `invalidate`, `DisabledStorage` |
+| `tests/database-guard.test.ts` | 2 | הגנה על מסד הפיתוח: כתובות שונות של אותו מסד (`localhost` / `127.0.0.1` / `::1`, משתמש, סיסמה ופרמטרים אחרים) מזוהות כאותו מסד, ומסד בדיקות נפרד מותר. אם `TEST_DATABASE_URL` מצביע למסד של `DATABASE_URL`, ההרצה נעצרת לפני כל פעולה במסד |
 | `tests/system.test.ts` | 14 | Health, ‏404 JSON, ‏CORS (כולל נרמול `/` בסוף `CORS_ORIGIN`), תקינות OpenAPI 3, תיעוד כל 35 הפעולות, כל פעולה מתועדת רשומה בשרת ומוגנת, Swagger UI ו־`/docs`, `openapi.json` תואם לקוד, Prisma, ‏Migrations והטבלאות הנדרשות |
 
 ## אימות חי מול השרת המקומי
