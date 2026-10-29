@@ -5,6 +5,7 @@ import { prisma } from '../src/db/prisma';
 import { hashPassword } from '../src/auth/password';
 import { signAccessToken } from '../src/auth/jwt';
 import { HttpError } from '../src/errors/HttpError';
+import { assertSafeTestDatabase } from './databaseGuard';
 import {
   PRIVATE_DOWNLOAD_TTL_SECONDS,
   setImageStorage,
@@ -97,6 +98,7 @@ export const PNG_BUFFER = Buffer.from(
 );
 
 export async function resetDatabase() {
+  assertSafeTestDatabase(process.env.DATABASE_URL ?? '', []);
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "EventPhotos", "Events", "GalleryItems", "Users", "Packages" RESTART IDENTITY CASCADE',
   );

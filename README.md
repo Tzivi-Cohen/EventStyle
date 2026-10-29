@@ -217,9 +217,11 @@ npm run dev                   # http://localhost:4000
 
 הבדיקות רצות מול **PostgreSQL אמיתי** במסד נפרד (`TEST_DATABASE_URL`), שנמחק בכל הרצה. במסד הפיתוח לא נוגעים.
 
+לפני כל חיבור למסד, הבדיקות נעצרות אם `TEST_DATABASE_URL` אינו מסד PostgreSQL **מקומי** ששמו כולל `test`, או אם הוא אותו מסד כמו `DATABASE_URL` (`tests/databaseGuard.ts`). מסד בענן (Neon, Render) לעולם לא משמש לבדיקות.
+
 ```bash
 cp .env.test.example .env.test   # TEST_DATABASE_URL = מסד בדיקות נפרד
-npm test                         # 410 בדיקות אוטומטיות
+npm test                         # 414 בדיקות אוטומטיות
 npm run typecheck                # TypeScript
 npm run build                    # Build
 npm run check                    # הכול יחד: prisma validate + typecheck + build + tests
@@ -256,7 +258,7 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 | `GOOGLE_CLIENT_ID` | להתחברות Google | אותו Client ID כמו בצד הלקוח. בלעדיו התחברות Google מחזירה `503` |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | ✅ ב־Production | יצירת חשבון המנהלת בפעם הראשונה |
 | `SEED_CLIENT_PASSWORD`, `SEED_DEMO_PACKAGES` | – | נתוני הדגמה, פיתוח בלבד |
-| `TEST_DATABASE_URL` (ב־`.env.test`) | לבדיקות | מסד בדיקות **נפרד**, שנמחק בכל הרצה |
+| `TEST_DATABASE_URL` (ב־`.env.test`) | לבדיקות | מסד בדיקות **מקומי ונפרד** (שמו כולל `test`), שנמחק בכל הרצה |
 
 ## 16. סביבות: Development, QA ו־Production
 
@@ -264,8 +266,8 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 |---|---|---|---|
 | Development | PostgreSQL מקומי (`eventstyle`) | מנהלת, חבילות ונתוני הדגמה | `npm run dev` |
 | Test | מסד בדיקות נפרד (`eventstyle_test`) | נמחק ונבנה מחדש בכל הרצה | `npm test` |
-| QA | מסד נפרד בענן | כמו Production, עם נתוני ניסיון בלבד | שירות נפרד ב־Render עם סודות משלו (טרם הוקם) |
-| Production | מסד Render / Neon | רק המנהלת ו־3 חבילות בארכיון. אין נתוני הדגמה | `NODE_ENV=production`, ‏`autoDeploy: false` (טרם נפרס) |
+| QA | Neon (פרויקט `eventstyle-qa`) | כמו Production, עם נתוני ניסיון בלבד | השירות `eventstyle-api-qa` מ־`render.yaml`, עם סודות משלו (טרם הוקם) |
+| Production | פרויקט Neon נפרד | רק המנהלת ו־3 חבילות בארכיון. אין נתוני הדגמה | `NODE_ENV=production`, ‏`autoDeploy: false` (טרם נפרס) |
 
 אותו קוד בכל הסביבות – רק משתני הסביבה משתנים.
 
@@ -295,7 +297,7 @@ npm run check                    # הכול יחד: prisma validate + typecheck 
 | בקשות לעיצוב, אישור ודחייה בידי המנהלת, ניהול אירועים | ✅ |
 | מחירונים, גלריות, תמונות פרטיות, הסכמה ופרסום לגלריה | ✅ |
 | Status Codes ופורמט שגיאה אחיד | ✅ |
-| בדיקות אוטומטיות (410) מול מסד בדיקות נפרד | ✅ |
+| בדיקות אוטומטיות (414) מול מסד בדיקות נפרד | ✅ |
 | קובצי פריסה ל־Render והוראות | ✅ מוכנים |
 | פריסה בפועל ובדיקה בענן | ⏳ טרם בוצעו |
 

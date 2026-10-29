@@ -132,5 +132,6 @@ npm run check
 | 403 | המשתמש מחובר, אבל אין לו הרשאה. למשל לקוח שמנסה לבצע פעולת מנהלת. |
 | העלאת תמונה מחזירה 503 | משתני `CLOUDINARY_*` לא הוגדרו. |
 | הבדיקות נכשלות עם `TEST_DATABASE_URL is not set` | צרי `.env.test` לפי `.env.test.example`. |
+| הבדיקות נעצרות עם `TEST_DATABASE_URL must point to a local PostgreSQL test database` | `TEST_DATABASE_URL` חייב להצביע למסד מקומי ששמו כולל `test` (למשל `eventstyle_test`). מסד בענן אסור לבדיקות. |
 | ב־Render: `prisma: not found` | ודאי שה־Build Command הוא `npm ci --include=dev && npm run build`. |
 | שינית את `schema.prisma` | הריצי `npm run db:migrate -- --name תיאור_השינוי`. |

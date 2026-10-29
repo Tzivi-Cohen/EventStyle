@@ -13,23 +13,25 @@
 ```
 GitHub                         Render
 ───────────────────────        ─────────────────────────────────────────────
-EventStyle (שרת)     ───────►  eventstyle-api      (Web Service, Node)   ─┐
+EventStyle (שרת)     ───────►  eventstyle-api-qa   (Web Service, Node)   ─┐
   render.yaml                    /api, /api-docs, /api/health             │ DATABASE_URL
                                                                            ▼
-                               eventstyle-db       (PostgreSQL 17)
+                               Neon: eventstyle-qa (PostgreSQL, Frankfurt)
 EventStyle-client    ───────►  eventstyle-client   (Static Site, React)
   render.yaml                    כל נתיב → index.html (React Router)
                                       │ VITE_API_URL
-                                      └──────────► eventstyle-api
+                                      └──────────► eventstyle-api-qa
 ```
 
 | רכיב | קובץ הגדרה | מה הוא עושה |
 |---|---|---|
 | שרת ה־API | `backend/render.yaml` | `npm ci --include=dev && npm run build`, ואז `npm run start:render` = `prisma migrate deploy` → Seed בטוח → השרת |
-| מסד PostgreSQL | `backend/render.yaml` (`databases`) | נוצר יחד עם השרת. `DATABASE_URL` מחובר אליו אוטומטית |
+| מסד PostgreSQL | Neon (פרויקט `eventstyle-qa`, מסד `neondb`) | מסד חיצוני. Render לא יוצר מסד; `DATABASE_URL` מוגדר ידנית בשירות (כתובת ה־Direct) |
 | אתר ה־React | `EventStyle-Client/render.yaml` | `npm ci && npm run build`, מפרסם את `dist`, וכל נתיב מוחזר ל־`index.html` |
 
 שני הקבצים מוגדרים עם `autoDeploy: false` – Deploy קורה רק כשאת לוחצת על **Manual Deploy**.
+
+**הפרדת סביבות:** `render.yaml` של השרת מגדיר את סביבת **QA**. Production יוקם בהמשך כשירות נפרד (למשל `eventstyle-api`), עם פרויקט Neon משלו וסודות משלו – בלי לשתף מסד, `JWT_SECRET`, סיסמת מנהלת או חשבון Cloudinary עם QA.
 
 ---
 
@@ -118,32 +120,33 @@ git push
 
 ---
 
-## 5. השרת והמסד ב־Render
+## 5. השרת ב־Render (QA, מסד Neon)
 
 1. התחברי ל־<https://render.com> עם GitHub.
-2. **New → Blueprint** ← בחרי את המאגר `EventStyle` (השרת). Render יקרא את `render.yaml` ויציג שני משאבים: `eventstyle-api` ו־`eventstyle-db`.
+2. **New → Blueprint** ← בחרי את המאגר `EventStyle` (השרת). Render יקרא את `render.yaml` ויציג שירות אחד: `eventstyle-api-qa`. מסד הנתונים לא נוצר ב־Render – הוא נמצא ב־Neon.
 3. מלאי את המשתנים שמסומנים `sync: false`:
 
 | משתנה | ערך | הערה |
 |---|---|---|
+| `DATABASE_URL` | כתובת ה־**Direct** (ללא Pooling) של מסד Neon, כולל `sslmode=require` | מ־Neon Dashboard → Connect. אם החיבור נכשל בגלל הפרמטר `channel_binding`, להסיר אותו מהכתובת |
 | `CORS_ORIGIN` | כתובת אתר ה־React, למשל `https://eventstyle-client.onrender.com` | בלי `/` בסוף. אפשר כמה כתובות מופרדות בפסיק. בשלב הראשון אפשר לשים ערך זמני ולעדכן אחרי שלב 6 |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | מ־Cloudinary Dashboard | בלעדיהם העלאת תמונות מחזירה 503, ושאר המערכת עובדת |
 | `GOOGLE_CLIENT_ID` | Client ID מ־Google Cloud Console | רשות. בלעדיו התחברות Google מושבתת |
 | `SEED_ADMIN_EMAIL` | האימייל של המנהלת בענן | |
 | `SEED_ADMIN_PASSWORD` | סיסמה **חזקה וחדשה** (לפחות 8 תווים, מומלץ 14+) | לא `Admin12345`. נדרשת רק ביצירה הראשונה |
 
-משתנים שמוגדרים אוטומטית: `DATABASE_URL` (מהמסד), `JWT_SECRET` (אקראי), `PORT` (Render), `NODE_ENV=production`.
+משתנים שמוגדרים אוטומטית: `JWT_SECRET` (אקראי), `PORT` (Render), `NODE_ENV=production`.
 
-4. **Apply**. Render יוצר את המסד ואת השרת.
+4. **Apply**. Render יוצר את השרת.
 5. **מה קורה בעליית השרת:**
    - `prisma migrate deploy` – מריץ את 8 ה־Migrations על המסד הריק. הפקודה רק מוסיפה Migrations שעוד לא הוחלו. **לעולם לא** `migrate reset` או `db push` בענן.
    - Seed – יוצר את המנהלת ואת 3 החבילות הכלליות (בארכיון) רק אם הם חסרים. לא דורס דבר.
    - השרת עולה ו־Render בודק את `/api/health`.
 6. בדיקה:
-   - `https://eventstyle-api.onrender.com/api/health` → `{"status":"ok","database":"ok",...}`
-   - `https://eventstyle-api.onrender.com/api-docs` → Swagger
+   - `https://eventstyle-api-qa.onrender.com/api/health` → `{"status":"ok","database":"ok",...}`
+   - `https://eventstyle-api-qa.onrender.com/api-docs` → Swagger
 
-> **מגבלות המסלול החינמי:** השרת נרדם אחרי זמן ללא שימוש, והבקשה הראשונה לוקחת עד כדקה. מסד PostgreSQL חינמי ב־Render מוגבל בזמן (נכון לכתיבת המסמך – כחודש), ואחר כך יש לשדרג או לעבור לספק אחר. לחלופה ארוכת טווח: Neon – מחקי מ־`render.yaml` את `fromDatabase` ואת `databases`, והגדירי `DATABASE_URL` עם `sync: false`.
+> **מגבלות המסלול החינמי:** השרת נרדם אחרי זמן ללא שימוש, והבקשה הראשונה לוקחת עד כדקה. גם מסד Neon חינמי נכנס למצב שינה כשאין שימוש, והחיבור הראשון אחריו איטי מעט יותר.
 
 ---
 
@@ -154,7 +157,7 @@ git push
 
 | משתנה | ערך |
 |---|---|
-| `VITE_API_URL` | `https://eventstyle-api.onrender.com/api` (כולל `/api`) |
+| `VITE_API_URL` | `https://eventstyle-api-qa.onrender.com/api` (כולל `/api`) |
 | `VITE_GOOGLE_CLIENT_ID` | אותו Client ID כמו בשרת (רשות) |
 | `VITE_CONTACT_PHONE`, `VITE_CONTACT_EMAIL` | רשות. ריק = פרטי הסטודיו הציבוריים |
 
