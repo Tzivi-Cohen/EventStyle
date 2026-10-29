@@ -1,13 +1,6 @@
 import type { Request, Response } from 'express';
 import * as authService from '../services/auth.service';
-import {
-  googleLoginSchema,
-  loginSchema,
-  registerSchema,
-  resendCodeSchema,
-  updateProfileSchema,
-  verifyEmailSchema,
-} from '../schemas/auth.schema';
+import { googleLoginSchema, loginSchema, registerSchema, updateProfileSchema } from '../schemas/auth.schema';
 
 export async function register(req: Request, res: Response) {
   const input = registerSchema.parse(req.body);
@@ -21,16 +14,6 @@ export async function login(req: Request, res: Response) {
 
 export async function me(req: Request, res: Response) {
   res.json(await authService.getCurrentUser(req.user!.id));
-}
-
-export async function verifyEmail(req: Request, res: Response) {
-  const input = verifyEmailSchema.parse(req.body);
-  res.json(await authService.verifyEmail(input));
-}
-
-export async function resendCode(req: Request, res: Response) {
-  const { email } = resendCodeSchema.parse(req.body);
-  res.json(await authService.resendVerificationCode(email));
 }
 
 export async function updateMe(req: Request, res: Response) {

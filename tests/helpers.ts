@@ -4,7 +4,6 @@ import { createApp } from '../src/app';
 import { prisma } from '../src/db/prisma';
 import { hashPassword } from '../src/auth/password';
 import { signAccessToken } from '../src/auth/jwt';
-import { setMailer, type Mailer } from '../src/services/email/mailer';
 import { HttpError } from '../src/errors/HttpError';
 import {
   PRIVATE_DOWNLOAD_TTL_SECONDS,
@@ -18,17 +17,6 @@ import {
 } from '../src/services/storage/imageStorage';
 
 export { prisma };
-
-/** שירות מיילים מדומה – שומר את הקודים שנשלחו במקום לשלוח */
-export class FakeMailer implements Mailer {
-  sent: { email: string; code: string }[] = [];
-  async sendVerificationCode(to: { email: string }, code: string) {
-    this.sent.push({ email: to.email, code });
-  }
-  lastCodeFor(email: string) {
-    return [...this.sent].reverse().find((m) => m.email === email)?.code;
-  }
-}
 
 /** אחסון תמונות מדומה – לא פונה ל-Cloudinary */
 export class FakeStorage implements ImageStorage {
@@ -97,9 +85,7 @@ export class FakeStorage implements ImageStorage {
   }
 }
 
-export const mailer = new FakeMailer();
 export const storage = new FakeStorage();
-setMailer(mailer);
 setImageStorage(storage);
 
 export const api = supertest(createApp());
@@ -114,7 +100,6 @@ export async function resetDatabase() {
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "EventPhotos", "Events", "GalleryItems", "Users", "Packages" RESTART IDENTITY CASCADE',
   );
-  mailer.sent = [];
   storage.reset();
   setImageStorage(storage);
 

@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 export const EVENT_TYPES = ['Birthday', 'BatMitzvah', 'Brit', 'Corporate', 'Private'] as const;
-export const EVENT_STATUSES = ['New', 'Planning', 'Preparing', 'Ready', 'Completed'] as const;
+/** סטטוסים תפעוליים – רק המנהלת מנהלת אותם, אחרי שהאירוע אושר או נוצר על ידה */
+export const OPERATIONAL_EVENT_STATUSES = ['New', 'Planning', 'Preparing', 'Ready', 'Completed'] as const;
+/** כל הסטטוסים, כולל בקשות לקוחות: Pending (ממתינה לאישור) ו-Rejected (נדחתה) */
+export const EVENT_STATUSES = [...OPERATIONAL_EVENT_STATUSES, 'Pending', 'Rejected'] as const;
 
 /** נרמול אימייל: הסרת רווחים והמרה לאותיות קטנות, ואז בדיקת תקינות */
 export const emailSchema = z
@@ -20,6 +23,11 @@ export const eventTypeSchema = z.enum(EVENT_TYPES, {
 
 export const eventStatusSchema = z.enum(EVENT_STATUSES, {
   error: `Must be one of: ${EVENT_STATUSES.join(', ')}`,
+});
+
+/** סטטוס שהמנהלת יכולה לקבוע ישירות. Pending / Rejected נקבעים רק דרך בקשה, אישור ודחייה */
+export const operationalStatusSchema = z.enum(OPERATIONAL_EVENT_STATUSES, {
+  error: `Must be one of: ${OPERATIONAL_EVENT_STATUSES.join(', ')}. Requests are approved or rejected with /approve and /reject`,
 });
 
 export const DEFAULT_PAGE_SIZE = 10;

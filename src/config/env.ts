@@ -18,10 +18,7 @@ const envSchema = z
       .regex(/^\d+[smhd]$/, 'JWT_EXPIRES_IN must look like 15m, 2h or 1d')
       .default('2h'),
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
-
-    // אין שירות מיילים חיצוני – קוד האימות מודפס ביומן השרת.
-    // הערך הישן "brevo" (אם נשאר בהגדרות השרת) מטופל כ-console, כדי שהשרת לא ייפול בעלייה
-    EMAIL_PROVIDER: z.preprocess((value) => (value === 'brevo' ? 'console' : value), z.enum(['console']).default('console')),
+    // אין אימות אימייל בקוד ואין שליחת מיילים. EMAIL_PROVIDER ישן בקובץ ההגדרות פשוט מתעלמים ממנו
 
     CLOUDINARY_CLOUD_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
     CLOUDINARY_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -52,13 +49,19 @@ if (!parsed.success) {
 
 const raw = parsed.data;
 
+/** הדפדפן שולח Origin בלי / בסוף – כך כתובת שהוגדרה עם / (למשל https://site.onrender.com/) עדיין מותרת */
+export function parseCorsOrigins(value: string): string[] {
+  return value
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
 export const env = {
   ...raw,
   isProduction: raw.NODE_ENV === 'production',
   isTest: raw.NODE_ENV === 'test',
-  corsOrigins: raw.CORS_ORIGIN.split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean),
+  corsOrigins: parseCorsOrigins(raw.CORS_ORIGIN),
   cloudinaryConfigured: Boolean(
     raw.CLOUDINARY_CLOUD_NAME && raw.CLOUDINARY_API_KEY && raw.CLOUDINARY_API_SECRET,
   ),

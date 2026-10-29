@@ -50,7 +50,7 @@ npm install
      ```
    - `CORS_ORIGIN`: כתובת צד ה־React. ב־Vite זו בדרך כלל `http://localhost:5173`.
 3. את שאר המשתנים אפשר להשאיר כמו שהם בינתיים:
-   - `EMAIL_PROVIDER=console`: קוד האימות יודפס בטרמינל. אין שליחת מיילים בפרויקט.
+   - אין אימות אימייל בקוד ואין שליחת מיילים. אם נשאר בקובץ `EMAIL_PROVIDER`, השרת מתעלם ממנו.
    - שדות `CLOUDINARY_*` ריקים: העלאת תמונות לא תעבוד עד שתגדירי אותם.
 
 > 🔒 הקובץ `.env` נמצא ב־`.gitignore` ולא יעלה ל־GitHub. כך צריך להיות.
@@ -111,46 +111,11 @@ npm run check
 
 ---
 
-## שלב 10 – העלאה ל־GitHub
+## שלב 10 – העלאה ל־GitHub ול־Render
 
-1. צרי Repository חדש ב־GitHub, למשל `eventstyle-backend`, **בלי** README.
-2. בתוך תיקיית `backend`:
-   ```bash
-   git init
-   git add .
-   git commit -m "EventStyle backend"
-   git branch -M main
-   git remote add origin https://github.com/USERNAME/eventstyle-backend.git
-   git push -u origin main
-   ```
-3. ודאי ש־`.env` **לא** מופיע ב־GitHub.
+ההוראות המלאות נמצאות ב־[DEPLOYMENT.md](DEPLOYMENT.md): גיבוי המסד ובדיקת שחזור, GitHub, השרת והמסד ב־Render, אתר ה־React, Google, Cloudinary, העברת נתונים (רשות) ובדיקות אחרי העלאה.
 
-## שלב 11 – פריסה ב־Render
-
-1. הכיני מראש:
-   - מסד נתונים ב־Neon (ראי [docs/SERVICES-SETUP.md](docs/SERVICES-SETUP.md)).
-   - (מומלץ) חשבון Cloudinary.
-2. היכנסי ל־<https://render.com> והתחברי עם GitHub.
-3. לחצי **New → Blueprint**, ובחרי את ה־Repository. Render יקרא את `render.yaml`.
-4. Render יבקש למלא את המשתנים המסומנים:
-   - `DATABASE_URL`: כתובת החיבור מ־Neon.
-   - `CORS_ORIGIN`: כתובת צד ה־React אחרי הפריסה. אפשר לעדכן אותה בהמשך.
-   - `CLOUDINARY_*`.
-   - `SEED_ADMIN_EMAIL` ו־`SEED_ADMIN_PASSWORD`: פרטי המנהלת בענן. בחרי סיסמה חזקה!
-   - אין צורך ב־`SEED_CLIENT_PASSWORD`: ב־Production לא נוצרים לקוחות, אירועים, פריטי גלריה או חבילות הדגמה.
-5. לחצי **Apply**. ה־Build לוקח כמה דקות.
-6. בסיום תקבלי כתובת כמו `https://eventstyle-api.onrender.com`. בדקי:
-   - `https://eventstyle-api.onrender.com/api/health`
-   - `https://eventstyle-api.onrender.com/api-docs`
-
-**מה קורה בכל פריסה:**
-1. `npm ci` ו־`prisma generate`, ואז Build.
-2. בעליית השרת: `prisma migrate deploy` ו־Seed. ה־Seed בטוח: הוא יוצר רק מה שחסר ולא דורס נתונים. ב־Production הוא יוצר רק את 3 החבילות הכלליות – בארכיון, עד שהמנהלת מפעילה אותן (כשאין חבילות בכלל) – ואת המנהלת. אף נתון הדגמה.
-3. Render בודק את `/api/health`.
-
-> אין שליחת מיילים: `EMAIL_PROVIDER=console` מוגדר ב־`render.yaml`, וקודי האימות מופיעים ב־**Logs** של Render, שרק לך יש גישה אליהם.
->
-> במסלול החינמי של Render השרת "נרדם" אחרי זמן ללא שימוש. הבקשה הראשונה אחרי שינה יכולה לקחת כחצי דקה עד דקה. זה תקין.
+> ה־Repository המקומי כבר קיים – אין צורך ב־`git init`. לפני כל Push ודאי ש־`.env` ו־`.env.test` **לא** מופיעים ב־`git status`.
 
 ---
 
@@ -166,7 +131,6 @@ npm run check
 | 401 בכל בקשה | חסרה הכותרת `Authorization: Bearer <token>`, או שה־Token פג תוקף. התחברי מחדש. |
 | 403 | המשתמש מחובר, אבל אין לו הרשאה. למשל לקוח שמנסה לבצע פעולת מנהלת. |
 | העלאת תמונה מחזירה 503 | משתני `CLOUDINARY_*` לא הוגדרו. |
-| קוד האימות לא הגיע | הקוד לא נשלח במייל. הוא מופיע בטרמינל של השרת או ב־Logs של Render. |
 | הבדיקות נכשלות עם `TEST_DATABASE_URL is not set` | צרי `.env.test` לפי `.env.test.example`. |
 | ב־Render: `prisma: not found` | ודאי שה־Build Command הוא `npm ci --include=dev && npm run build`. |
 | שינית את `schema.prisma` | הריצי `npm run db:migrate -- --name תיאור_השינוי`. |

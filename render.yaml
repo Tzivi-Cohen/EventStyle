@@ -1,7 +1,9 @@
 # ============================================================
-# EventStyle – הגדרת פריסה ל-Render (Blueprint)
+# EventStyle – שרת ה-API ב-Render (Blueprint)
 # הקובץ מניח שתיקיית ה-backend היא שורש ה-Repository ב-GitHub.
-# אם ה-backend נמצא בתת-תיקייה, הוסיפי:  rootDir: backend
+# אם ה-backend נמצא בתת-תיקייה של Repository משותף, הוסיפי לשירות:  rootDir: backend
+# הוראות מלאות, צעד אחר צעד: DEPLOYMENT.md
+# אין כאן סודות: כל ערך רגיש מוגדר במסך Environment של Render (sync: false).
 # ============================================================
 services:
   - type: web
@@ -9,28 +11,28 @@ services:
     runtime: node
     plan: free
     region: frankfurt
-    # התקנה (כולל devDependencies שנדרשים לבנייה) + prisma generate + קומפילציה
+    # התקנה (כולל devDependencies שנדרשים לבנייה) + prisma generate + קומפילציה (כולל prisma/seed.ts)
     buildCommand: npm ci --include=dev && npm run build
-    # הרצת Migrations, Seed בטוח (יוצר רק מה שחסר) והפעלת השרת
+    # prisma migrate deploy (רק Migrations שעוד לא הוחלו, בלי reset) → Seed בטוח (יוצר רק מה שחסר) → השרת
     startCommand: npm run start:render
     healthCheckPath: /api/health
-    autoDeploy: true
+    autoDeploy: false # Deploy רק ביוזמתך, לא בכל Push
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
         value: "22"
-      # PORT נקבע אוטומטית על ידי Render
+      # PORT נקבע אוטומטית על ידי Render, והשרת קורא אותו מ-process.env.PORT
       - key: DATABASE_URL
-        sync: false # כתובת החיבור מ-Neon (או ספק PostgreSQL אחר)
+        fromDatabase: # מסד PostgreSQL של Render (למטה). אם בחרת Neon – מחקי את 2 השורות האלה והגדירי sync: false
+          name: eventstyle-db
+          property: connectionString
       - key: JWT_SECRET
-        generateValue: true # Render יוצר סוד אקראי
+        generateValue: true # Render יוצר סוד אקראי ארוך
       - key: JWT_EXPIRES_IN
         value: 2h
       - key: CORS_ORIGIN
-        sync: false # כתובת צד הלקוח, למשל https://eventstyle.vercel.app
-      - key: EMAIL_PROVIDER
-        value: console # אין שירות מיילים חיצוני – קודי האימות מודפסים ב-Logs
+        sync: false # כתובת אתר ה-React, למשל https://eventstyle-client.onrender.com (בלי / בסוף)
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
@@ -42,6 +44,13 @@ services:
       - key: SEED_ADMIN_EMAIL
         sync: false
       - key: SEED_ADMIN_PASSWORD
-        sync: false
-      # ב-Production ה-Seed יוצר רק את 3 החבילות הכלליות – בארכיון, בלי מחירי הדגמה גלויים (כשאין חבילות) – ואת המנהלת.
+        sync: false # סיסמה חזקה, לפחות 8 תווים. נדרשת רק ליצירת המנהלת בפעם הראשונה
+      # ב-Production ה-Seed יוצר רק את 3 החבילות הכלליות – בארכיון (כשאין חבילות) – ואת המנהלת.
       # לקוחות, אירועים, גלריה וחבילות הדגמה לא נוצרים, ולכן SEED_CLIENT_PASSWORD לא נדרש כאן.
+
+databases:
+  - name: eventstyle-db
+    databaseName: eventstyle
+    plan: free # במסלול החינמי של Render המסד מוגבל בזמן – ראו DEPLOYMENT.md
+    region: frankfurt
+    postgresMajorVersion: "17"

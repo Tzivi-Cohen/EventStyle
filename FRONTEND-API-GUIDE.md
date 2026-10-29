@@ -6,7 +6,7 @@
 **איך לקרוא את המדריך:**
 - פרקים 1–2: הגדרות חיבור ומשתמשים.
 - פרק 3: טיפוסי הנתונים.
-- פרק 4: כל 33 ה־Endpoints, אחד אחד.
+- פרק 4: כל 35 ה־Endpoints, אחד אחד.
 - פרקים 5–6: העלאת תמונות ושגיאות.
 - פרק 7: דוגמאות קוד.
 - פרק 8: מיפוי מסכים.
@@ -22,7 +22,7 @@
 > - **שגיאות חדשות:** `409 PHOTO_LIMIT_REACHED` (עד 50 תמונות לאירוע), `409 DUPLICATE_PHOTO`, `409 PUBLISH_CONSENT_REQUIRED`, `409 ALREADY_PUBLISHED`, `409 PHOTO_IN_GALLERY` (נדיר – לנסות שוב), `502 STORAGE_DELETE_FAILED`.
 > - **מחיקת תמונה או אירוע שפורסמו בגלריה** מסירה גם את העותק הציבורי (פרק 4.7).
 > - **`AdminGalleryItem`:** נוסף השדה `sourceEventPhotoId`.
-> - **אין יותר שליחת מיילים (Brevo הוסר):** קוד האימות לא נשלח למייל, אלא מודפס ביומן השרת (`EMAIL_PROVIDER=console`). ההרשמה, האימות והשליחה החוזרת ממשיכים לעבוד באותו מבנה בקשה ותשובה. שגיאת `502 EMAIL_SEND_FAILED` כבר לא קיימת (פרקים 2.2, 4.2 ו־6).
+> - **אין אימות אימייל בקוד ואין שליחת מיילים:** `POST /auth/verify-email` ו־`POST /auth/resend-code` הוסרו. אחרי הרשמה מקבלים Token ונכנסים מיד (פרק 2.2).
 > - **התחברות והרשמה עם Google:** `POST /auth/google` (פרקים 2.6, 4.2 ו־12).
 > - **עריכת פרופיל:** `PATCH /auth/me` (פרקים 2.7 ו־4.2).
 > - **חלוקה לעמודים (Pagination)** ב־`GET /events`, `GET /events/my` ו־`GET /gallery`. ⚠️ **שינוי במבנה התשובה:** הרשימות מוחזרות עכשיו כ־`{ data, pagination }` ולא כמערך.
@@ -126,7 +126,7 @@ interface ImportMeta {
 
 | נתיבים | מגבלה לכל כתובת IP |
 |---|---|
-| `POST /auth/register`, `/auth/login`, `/auth/google`, `/auth/verify-email`, `/auth/resend-code` | 30 בקשות ב־15 דקות (משותף לכולם) |
+| `POST /auth/register`, `/auth/login`, `/auth/google` | 30 בקשות ב־15 דקות (משותף לכולם) |
 | כל נתיבי `/api` | 300 בקשות בדקה |
 
 - **חריגה:** מחזירה `429 TOO_MANY_REQUESTS`.
@@ -140,68 +140,47 @@ interface ImportMeta {
 
 | תפקיד | איך נוצר | מה מותר |
 |---|---|---|
-| **Guest** (לא מחובר) | – | צפייה בחבילות ובגלריה, הרשמה, התחברות (עם סיסמה או עם Google) ואימות אימייל |
-| **Client** | הרשמה דרך `POST /auth/register`, או התחברות ראשונה עם Google (`POST /auth/google`). **כל הרשמה יוצרת Client** | כל מה שמותר ל־Guest, וגם: צפייה בפרטים שלו ועריכתם (`GET`/`PATCH /auth/me`), צפייה באירועים שלו (`/events/my`) ובאירוע שלו עם תמונות (`/events/:id`) |
+| **Guest** (לא מחובר) | – | צפייה בחבילות ובגלריה, הרשמה והתחברות (עם סיסמה או עם Google) |
+| **Client** | הרשמה דרך `POST /auth/register`, או התחברות ראשונה עם Google (`POST /auth/google`). **כל הרשמה יוצרת Client** | כל מה שמותר ל־Guest, וגם: צפייה בפרטים שלו ועריכתם (`GET`/`PATCH /auth/me`), שליחת בקשות לעיצוב ועריכתן (פרק 4.8), צפייה באירועים שלו (`/events/my`) ובאירוע שלו עם תמונות (`/events/:id`) |
 | **Admin** (מנהלת הסטודיו) | נוצר רק ב־Seed. אי אפשר להירשם או להתחבר לראשונה כ־Admin, גם לא דרך Google | הכול: ניהול אירועים, סטטוסים, תמונות אירועים וגלריה, וגם עריכת הפרופיל של עצמה |
 
 **סימונים במדריך:** 🌐 Guest (בלי Token) · 👤 כל משתמש מחובר · 👑 Admin בלבד.
 
 > **ההגנה האמיתית נמצאת בשרת.** הסתרת כפתורים לפי `user.role` היא רק לנוחות. גם אם לקוח ינסה לגשת לנתיב של מנהלת, השרת יחזיר `403`.
 
-### 2.2 תהליך ההרשמה ואימות האימייל
+### 2.2 תהליך ההרשמה – בלי קוד אימות
 
 ```
 [טופס הרשמה] ──POST /auth/register──► 201: token + user (emailVerified=false)
-       │                                   השרת יוצר קוד בן 6 ספרות (מודפס ביומן השרת)
+       │
        ▼
-[מסך הזנת קוד] ──POST /auth/verify-email──► 200: token חדש + user (emailVerified=true)
-       │   ▲                                   + linkedEventsCount
-       │   └── "שלחי שוב" ──POST /auth/resend-code──► 200 (אפשר פעם ב־60 שניות)
-       ▼
-[האירועים שלי] ──GET /events/my──► האירועים שקושרו ללקוחה
+[האירועים שלי] ── מחוברת מיד: אפשר לשלוח בקשה לעיצוב (POST /events/requests)
 ```
 
-**כללי קוד האימות:**
-| כלל | ערך |
-|---|---|
-| אורך | 6 ספרות בדיוק (מחרוזת, למשל `"048213"`, **לא** מספר, כדי לא לאבד אפסים בהתחלה) |
-| תוקף | 10 דקות |
-| שימוש | חד־פעמי |
-| ניסיונות שגויים | עד 5. אחרי החמישי הקוד נפסל, וצריך לבקש קוד חדש |
-| שליחה חוזרת | פעם ב־60 שניות, ועד 5 קודים בשעה |
-| קוד חדש | מבטל את הקוד הקודם |
+- **אין אימות אימייל בקוד ואין שליחת מיילים.** אין מסך הזנת קוד – אחרי ההרשמה עוברים ישר לאזור האישי.
+- **כתובת שכבר רשומה** (בכל מצב, מאומתת או לא) – `409`. חשבון קיים לעולם לא מוחלף בהרשמה.
 
-**קישור אירועים ללקוחה:**
-- המנהלת יוצרת אירועים עם `clientEmail`.
-- אירוע מקושר ללקוחה (`userId`) **רק אחרי** שהיא אימתה את כתובת האימייל.
-- לכן, לקוחה שעוד לא אימתה תקבל רשימה ריקה ב־`/events/my`.
-- ברגע שהיא מאמתת, כל האירועים עם האימייל שלה מקושרים אליה אוטומטית. מספרם מוחזר ב־`linkedEventsCount`.
-
-**איפה מקבלים את הקוד (`EMAIL_PROVIDER=console`):**
-- לשרת אין שירות מיילים חיצוני, ולכן **המייל לא נשלח**. זה נכון גם בפיתוח וגם בשרת בענן.
-- הקוד מודפס בטרמינל של השרת (או ב־**Logs** של Render) בשורה כמו:
-  ```
-  📧 [EMAIL_PROVIDER=console] Verification code for noa@example.com: 482913
-  ```
-- **השפעה על המסכים:** אל תכתבי למשתמשת "שלחנו לך קוד למייל". רק מי שיש לו גישה ליומן השרת (המנהלת) יכול לראות את הקוד. משתמשות Google עם Gmail או Workspace לא צריכות קוד, כי האימייל שלהן מאומת אוטומטית (פרק 2.6).
+**מה המשמעות של `emailVerified`:**
+- `true` רק כשהבעלות על הכתובת **הוכחה**: התחברות עם Google מכתובת Gmail או Workspace (פרק 2.6), או חשבון שאומת בעבר.
+- הוא **לא חוסם** שום דבר: התחברות, אזור אישי ובקשות לעיצוב עובדים גם כש־`false`. אל תציגי הודעת "אמתי את האימייל".
+- **קישור אירועים שהמנהלת פתחה לפי `clientEmail`:** רק לחשבון עם `emailVerified=true`. כך מי שנרשם עם כתובת של מישהי אחרת לא רואה את האירוע ואת התמונות הפרטיות שלה. לקוחה שנרשמה עם סיסמה רואה את הבקשות שהיא עצמה שלחה; אירוע שהסטודיו פתח לכתובת שלה יופיע כשתתחבר עם Google (Gmail).
 
 ### 2.3 התחברות
 
-- `POST /auth/login` מחזיר `token` ו־`user`.
-- גם משתמשת שלא אימתה את האימייל יכולה להתחבר. בדקי את `user.emailVerified`, ואם הוא `false`, הציגי הודעה וקישור למסך הזנת הקוד.
+- `POST /auth/login` מחזיר `token` ו־`user`, לכל משתמש עם סיסמה – בלי קשר ל־`emailVerified`.
+- אחרי התחברות עוברים ישר לאזור האישי (מנהלת – לממשק הניהול).
 
 ### 2.4 ניהול JWT
 
 | נושא | פירוט |
 |---|---|
-| מאיפה מקבלים Token | מ־`register`, `login`, `google` ו־`verify-email`. כולם מחזירים `{ token, user }`. **זה אותו JWT של המערכת** גם אחרי התחברות עם Google |
+| מאיפה מקבלים Token | מ־`register`, `login` ו־`google`. כולם מחזירים `{ token, user }`. **זה אותו JWT של המערכת** גם אחרי התחברות עם Google |
 | איך שולחים | Header בכל בקשה מוגנת: `Authorization: Bearer <token>` |
 | תוקף | שעתיים (ברירת המחדל של `JWT_EXPIRES_IN` בשרת). **אין Refresh Token** |
 | מה יש בתוך ה־Token | `sub` (מזהה המשתמש כמחרוזת), `role`, `iat` ו־`exp` |
 | איפה לשמור | `localStorage` הוא הפתרון הפשוט, והוא מתאים לפרויקט. ה־Token נשמר גם אחרי רענון הדף |
 | טעינת האפליקציה | אם יש Token שמור, קראי ל־`GET /auth/me`. אם התשובה `200`, המשתמש מחובר. אם `401`, מחקי את ה־Token |
 | Token שפג תוקפו | כל בקשה מוגנת מחזירה `401 UNAUTHORIZED`. מחקי את ה־Token ושלחי את המשתמש למסך ההתחברות |
-| אחרי `verify-email` | **החליפי** את ה־Token השמור ב־Token החדש שמוחזר, ועדכני את `user`, כי `emailVerified` השתנה |
 | התפקיד | קחי אותו מ־`user.role` שמוחזר מהשרת. אין צורך לפענח את ה־Token. השרת בודק את התפקיד מול מסד הנתונים בכל בקשה |
 
 ### 2.5 התנתקות
@@ -239,7 +218,7 @@ POST /auth/google { idToken } ──► השרת מאמת את הטוקן מול
 | סוג כתובת | `emailVerified` | אירועים קיימים |
 |---|---|---|
 | Gmail (`@gmail.com`), או דומיין של Google Workspace | `true` מיד | מקושרים מיד |
-| כל כתובת אחרת (למשל `@walla.co.il` שמחוברת לחשבון Google) | `false` | מקושרים רק אחרי אימות בקוד: `POST /auth/resend-code` ואז `POST /auth/verify-email`, בדיוק כמו בהרשמה רגילה |
+| כל כתובת אחרת (למשל `@walla.co.il` שמחוברת לחשבון Google) | `false` | לא מקושרים אוטומטית (Google לא מוכיחה בעלות על כתובת שאינה שלה). החשבון עובד כרגיל |
 
 **חשבון קיים עם אותו אימייל:**
 | מצב | תוצאה |
@@ -247,11 +226,12 @@ POST /auth/google { idToken } ──► השרת מאמת את הטוקן מול
 | החשבון כבר מקושר לאותו חשבון Google | התחברות רגילה (הזיהוי לפי מזהה Google, גם אם האימייל השתנה) |
 | חשבון רגיל (עם סיסמה) **מאומת**, וכתובת Gmail או Workspace | החשבון מקושר ל־Google. מעכשיו אפשר להתחבר בשתי הדרכים, **והסיסמה ממשיכה לעבוד** |
 | חשבון רגיל, וכתובת שאינה Gmail או Workspace | `409`: "התחברי עם אימייל וסיסמה". החשבון לא משתנה |
-| חשבון רגיל שעוד **לא אימת** את האימייל, וכתובת Gmail או Workspace | `200` עם `isNewUser: true`: Google מוכיחה שזו בעלת הכתובת, ולכן החשבון הלא מאומת **מוחלף** בחשבון Google חדש ומאומת (`id` חדש). הסיסמה והטלפון של החשבון הישן לא עוברים, וכל Token ישן שלו מקבל `401` |
+| חשבון רגיל **לא מאומת** (עם סיסמה) **בלי אירועים ובקשות**, וכתובת Gmail או Workspace | `200` עם `isNewUser: true`: Google מוכיחה שזו בעלת הכתובת, ולכן החשבון הלא מאומת **מוחלף** בחשבון Google חדש ומאומת (`id` חדש). הסיסמה והטלפון של החשבון הישן לא עוברים, וכל Token ישן שלו מקבל `401` |
+| חשבון רגיל **לא מאומת** שכבר יש לו אירועים או בקשות | `409`: "התחברי עם אימייל וסיסמה". לא מקשרים Google לחשבון שהסיסמה שלו אולי של מישהו אחר, ולא מוחקים בקשות |
 | חשבון Admin | `409`: מנהלת מתחברת רק עם סיסמה |
 | האימייל כבר מקושר לחשבון Google **אחר** | `409` |
 
-> **למה לא מקשרים לפי אימייל בלבד?** כדי שמי שפתח חשבון עם כתובת של מישהו אחר (בלי לאמת אותה) לא יקבל גישה לחשבון של בעל הכתובת האמיתי, ולהפך. חשבון לא מאומת לא "חוסם" את בעלת הכתובת: כשהיא מוכיחה בעלות דרך Google (או נרשמת מחדש ומאמתת בקוד), החשבון הלא מאומת מוחלף, ומי שתפס את הכתובת מאבד את הגישה.
+> **למה לא מקשרים לפי אימייל בלבד?** כדי שמי שפתח חשבון עם כתובת של מישהו אחר (בלי לאמת אותה) לא יקבל גישה לחשבון של בעל הכתובת האמיתי, ולהפך. כשבעלת הכתובת מוכיחה בעלות דרך Google, חשבון לא מאומת בלי אירועים מוחלף, ומי שתפס את הכתובת מאבד את הגישה. הרשמה מחדש עם סיסמה **לא** מחליפה חשבון קיים – בלי קוד אימות, זה היה מאפשר לכל אחד להשתלט על כל חשבון.
 
 **משתמש שנרשם רק עם Google:**
 - **התחברות עם סיסמה:** תחזיר `401 INVALID_CREDENTIALS`, כי אין לו סיסמה. הציגי לו את כפתור Google.
@@ -296,6 +276,10 @@ POST /auth/google { idToken } ──► השרת מאמת את הטוקן מול
 | `Preparing` | בהכנות |
 | `Ready` | מוכן |
 | `Completed` | הושלם |
+| `Pending` | בקשה ממתינה לאישור (נוצרת רק ב־`POST /events/requests`) |
+| `Rejected` | בקשה שנדחתה – נשמרת במסד (נקבעת רק ב־`POST /events/:id/reject`) |
+
+> `New`–`Completed` הם סטטוסים **תפעוליים** שהמנהלת מנהלת. `Pending` ו־`Rejected` הם סטטוסים של **בקשה**: אי אפשר לקבוע אותם ב־`POST /events`, `PUT /events/:id` או `PATCH /events/:id/status` (מתקבל `400`). אישור מעביר `Pending → New`.
 
 #### Role
 `Admin` | `Client`
@@ -309,7 +293,7 @@ POST /auth/google { idToken } ──► השרת מאמת את הטוקן מול
 ```ts
 // src/types/api.ts
 export const EVENT_TYPES = ['Birthday', 'BatMitzvah', 'Brit', 'Corporate', 'Private'] as const;
-export const EVENT_STATUSES = ['New', 'Planning', 'Preparing', 'Ready', 'Completed'] as const;
+export const EVENT_STATUSES = ['New', 'Planning', 'Preparing', 'Ready', 'Completed', 'Pending', 'Rejected'] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
 export type EventStatus = (typeof EVENT_STATUSES)[number];
@@ -464,6 +448,11 @@ export interface EventItem {          // השם Event תפוס בדפדפן, ל�
   status: EventStatus;
   coverImageUrl: string | null;
   notes?: string | null;              // רק למנהלת. אצל לקוח השדה לא קיים
+  description: string | null;         // קונספט העיצוב מבקשת הלקוחה – גלוי לשתיהן
+  clientNotes: string | null;         // הערות מיוחדות מבקשת הלקוחה – גלוי לשתיהן
+  rejectionReason: string | null;     // סיבת דחייה (רשות) – גלויה ללקוחה
+  reviewedAt: string | null;          // מתי הבקשה אושרה / נדחתה
+  reviewedById?: number | null;       // רק למנהלת: מי אישרה / דחתה
   userId: number | null;
   photoCount?: number;                // רק ברשימות (GET /events, GET /events/my)
   photos?: EventPhoto[];              // רק באירוע בודד (GET/POST/PUT/PATCH). למנהלת: AdminEventPhoto[]
@@ -519,6 +508,8 @@ export interface ApiErrorBody {
 | `photoCount` | ✔ | ✘ |
 | `photos` | ✘ | ✔ (ממוינות מהישנה לחדשה) |
 | `notes` | ✔ למנהלת. ✘ ללקוח | ✔ למנהלת. ✘ ללקוח |
+| `description`, `clientNotes`, `rejectionReason`, `reviewedAt` | ✔ | ✔ |
+| `reviewedById` | ✔ למנהלת. ✘ ללקוח | ✔ למנהלת. ✘ ללקוח |
 
 ### 3.4 הערות על פורמטים
 
@@ -534,13 +525,11 @@ export interface ApiErrorBody {
 
 ## 4. כל ה־Endpoints
 
-### 4.1 טבלת סיכום (33 פעולות)
+### 4.1 טבלת סיכום (35 פעולות)
 
 | # | Method | URL | JWT | הרשאה | תפקיד |
 |---|---|---|---|---|---|
 | 1 | POST | `/auth/register` | ✘ | 🌐 | הרשמת לקוחה |
-| 2 | POST | `/auth/verify-email` | ✘ | 🌐 | אימות אימייל בקוד |
-| 3 | POST | `/auth/resend-code` | ✘ | 🌐 | שליחה חוזרת של קוד |
 | 4 | POST | `/auth/login` | ✘ | 🌐 | התחברות |
 | 5 | GET | `/auth/me` | ✔ | 👤 | פרטי המשתמש המחובר |
 | 6 | GET | `/packages?eventType=` | ✘ | 🌐 | המחירון: חבילות פעילות, עם סינון רשות לפי סוג אירוע |
@@ -571,8 +560,12 @@ export interface ApiErrorBody {
 | 31 | PUT | `/events/:id/photos/:photoId/consent` | ✔ | בעלת האירוע בלבד | **חדש:** הסכמה / ביטול הסכמה לפרסום |
 | 32 | POST | `/events/:id/photos/:photoId/publish` | ✔ | 👑 | **חדש:** פרסום תמונה בגלריה כעותק נפרד |
 | 33 | GET | `/admin/event-photos` | ✔ | 👑 | **חדש:** תמונות אירוע לניהול (למשל ממתינות לפרסום) |
+| 34 | POST | `/events/requests` | ✔ | לקוחה | **חדש:** בקשה לעיצוב אירוע (נוצרת ב־`Pending`) |
+| 35 | PATCH | `/events/:id/request` | ✔ | בעלת הבקשה | **חדש:** עריכת בקשה – רק כשהיא `Pending` |
+| 36 | POST | `/events/:id/approve` | ✔ | 👑 | **חדש:** אישור בקשה: `Pending → New` |
+| 37 | POST | `/events/:id/reject` | ✔ | 👑 | **חדש:** דחיית בקשה: `Pending → Rejected`, עם סיבה רשות |
 
-> המספרים 20–33 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא של 20 ו־21 נמצא בפרק 4.2, אחרי `GET /auth/me`, של 22–25 בפרק 4.3, של 26–28 בפרק 4.4, ושל 29–33 בפרק 4.7.
+> מספרים 2 ו־3 (אימות אימייל בקוד) הוסרו – אין אימות בקוד. המספרים 20–37 נוספו בסוף כדי לשמור על המספור הקודם. התיעוד המלא של 20 ו־21 נמצא בפרק 4.2, אחרי `GET /auth/me`, של 22–25 בפרק 4.3, של 26–28 בפרק 4.4, של 29–33 בפרק 4.7, ושל 34–37 בפרק 4.8.
 
 **כללים שחלים על כל ה־Endpoints:**
 - **Path Parameters:** `:id` ו־`:photoId` חייבים להיות מספרים שלמים חיוביים. אחרת מתקבל `400 VALIDATION_ERROR` עם `field: "id"` (או `"photoId"`).
@@ -589,7 +582,7 @@ export interface ApiErrorBody {
 
 #### 1. `POST /auth/register` 🌐 – הרשמה
 
-יוצרת משתמש בתפקיד **Client** עם `emailVerified: false`, ויוצרת קוד אימות. הקוד מודפס ביומן השרת ולא נשלח במייל (פרק 2.2).
+יוצרת משתמש בתפקיד **Client** עם `emailVerified: false` ומחזירה Token – מחוברים מיד. אין קוד אימות (פרק 2.2).
 
 **Request Body:**
 | שדה | טיפוס | חובה | כללים |
@@ -611,8 +604,7 @@ export interface ApiErrorBody {
 **Response `201`:**
 ```json
 {
-  "message": "Registration successful. A 6-digit verification code was sent to noa.levi@example.com",
-  "verificationEmailSent": true,
+  "message": "Registration successful",
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "user": {
     "id": 5,
@@ -632,89 +624,12 @@ export interface ApiErrorBody {
 | HTTP | code | מתי |
 |---|---|---|
 | 400 | `VALIDATION_ERROR` | שדה חסר או לא תקין, או שדה מיותר (למשל `role`) |
-| 409 | `CONFLICT` | `An account with this email already exists`: האימייל כבר רשום **ומאומת**, או שייך לחשבון שמקושר ל־Google (אז מתחברים עם כפתור Google). במקרה נדיר של בקשה מקבילה: `The account was changed by another request. Please try again` |
-| 429 | `TOO_MANY_REQUESTS` | הרשמה חוזרת לאותו אימייל לא מאומת תוך פחות מ־60 שניות, או יותר מ־5 קודים בשעה. ראי `details.retryAfterSeconds` |
+| 409 | `CONFLICT` | `An account with this email already exists`: האימייל כבר רשום – בכל מצב (מאומת או לא, סיסמה או Google). גם בשתי הרשמות מקבילות רק אחת נשמרת |
+| 429 | `TOO_MANY_REQUESTS` | יותר מ־30 בקשות התחברות / הרשמה ב־15 דקות מאותה כתובת IP |
 
 **הערות:**
-- **אימייל רשום שלא אומת:** אם קיים חשבון **לא מאומת** עם אותו אימייל (לא Admin ולא מקושר ל־Google), ההרשמה **מחליפה** אותו בחשבון חדש עם `id` חדש ושולחת קוד חדש. התשובה היא `201`. כל Token של החשבון הישן מקבל `401`, והקוד הישן כבר לא תקף. מגבלות השליחה (60 שניות, 5 קודים בשעה) ממשיכות לחול.
-- **`verificationEmailSent`:** השדה נשאר בתשובה כדי לשמור על תאימות, ותמיד יהיה `true`, כי הדפסת הקוד ביומן השרת לא נכשלת. ההודעה `message` עדיין אומרת `...was sent to <email>`, אבל בפועל הקוד נמצא ביומן השרת.
-- **אחרי הרשמה:** שמרי את ה־Token ועברי למסך הזנת הקוד.
-
----
-
-#### 2. `POST /auth/verify-email` 🌐 – אימות האימייל
-
-**Request Body:**
-| שדה | טיפוס | חובה | כללים |
-|---|---|---|---|
-| `email` | string | ✔ | אימייל תקין |
-| `code` | string | ✔ | בדיוק 6 ספרות |
-
-```json
-{ "email": "noa.levi@example.com", "code": "482913" }
-```
-
-**Response `200`:**
-```json
-{
-  "message": "Email verified successfully",
-  "linkedEventsCount": 2,
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "id": 5,
-    "fullName": "נועה לוי",
-    "email": "noa.levi@example.com",
-    "phone": "050-1234567",
-    "address": null,
-    "role": "Client",
-    "emailVerified": true,
-    "googleLinked": false,
-    "createdAt": "2026-10-25T09:00:00.000Z"
-  }
-}
-```
-
-**שגיאות:**
-| HTTP | code | message | מתי |
-|---|---|---|---|
-| 400 | `VALIDATION_ERROR` | `Validation failed` | הקוד אינו 6 ספרות, או שהאימייל לא תקין |
-| 400 | `INVALID_CODE` | `Invalid verification code` + `details: { "attemptsLeft": 3 }` | קוד שגוי |
-| 400 | `INVALID_CODE` | `Too many wrong attempts. The code was cancelled, please request a new one` | ניסיון שגוי חמישי. הקוד נפסל |
-| 400 | `INVALID_CODE` | `Invalid verification code. Check the code or request a new one` | אין קוד פעיל: הוא כבר נפסל, או שהאימייל לא קיים במערכת |
-| 400 | `CODE_EXPIRED` | `Verification code has expired. Please request a new one` | עברו 10 דקות |
-| 409 | `CONFLICT` | `Email is already verified` | האימייל כבר אומת |
-
-**הערות:**
-- **אחרי הצלחה:** החליפי את ה־Token השמור ב־Token החדש, ועדכני את `user`.
-- **`linkedEventsCount`:** אפשר להציג אותו, למשל "נמצאו 2 אירועים שלך".
-
----
-
-#### 3. `POST /auth/resend-code` 🌐 – שליחה חוזרת של קוד
-
-**Request Body:**
-| שדה | טיפוס | חובה |
-|---|---|---|
-| `email` | string | ✔ |
-
-```json
-{ "email": "noa.levi@example.com" }
-```
-
-**Response `200`:**
-```json
-{ "message": "If an unverified account exists for this email, a new verification code has been sent" }
-```
-
-**התשובה זהה בכל מקרה:** גם אם האימייל לא רשום, וגם אם הוא כבר מאומת. כך השרת לא חושף אילו כתובות רשומות.
-
-**שגיאות:**
-| HTTP | code | מתי |
-|---|---|---|
-| 400 | `VALIDATION_ERROR` | אימייל לא תקין |
-| 429 | `TOO_MANY_REQUESTS` | `Please wait 42 seconds before requesting a new code` + `details: { "retryAfterSeconds": 42 }`, או יותר מ־5 קודים בשעה |
-
-**טיפ:** אחרי שליחה, השביתי את כפתור "שלחי שוב" ל־60 שניות והציגי ספירה לאחור. אם התקבל 429, השתמשי ב־`details.retryAfterSeconds` כדי להתחיל את הספירה מהמקום הנכון.
+- **חשבון קיים לעולם לא מוחלף בהרשמה.** בלי קוד אימות, החלפה הייתה מאפשרת לכל אחד "לתפוס" חשבון של מישהו אחר.
+- **אחרי הרשמה:** שמרי את ה־Token ועברי ישר לאזור האישי (`/my-events`).
 
 ---
 
@@ -756,8 +671,7 @@ export interface ApiErrorBody {
 | 429 | `TOO_MANY_REQUESTS` | יותר מ־30 ניסיונות ב־15 דקות |
 
 **אחרי התחברות:**
-- אם `user.role === 'Admin'`, עברי ללוח הניהול.
-- אם `user.emailVerified === false`, הציגי קישור למסך הזנת הקוד.
+- אם `user.role === 'Admin'`, עברי ללוח הניהול. אחרת – לאזור האישי (`/my-events`). אין מסך אימות באמצע.
 
 ---
 
@@ -825,7 +739,7 @@ export interface ApiErrorBody {
 ```
 
 - **`isNewUser`:** `true` אם החשבון נוצר עכשיו. זו הזדמנות להציע למשתמש להשלים טלפון בפרופיל.
-- **`user.emailVerified === false`:** קורה רק בכתובת שאינה Gmail או Workspace. במקרה כזה, העבירי למסך הזנת הקוד (ראי פרק 2.6).
+- **`user.emailVerified === false`:** קורה רק בכתובת שאינה Gmail או Workspace. החשבון עובד כרגיל – רק אירועים שהמנהלת פתחה לפי הכתובת לא מקושרים אליו אוטומטית (פרק 2.6).
 
 **שגיאות:**
 | HTTP | code | message | מתי |
@@ -1161,9 +1075,11 @@ export interface ApiErrorBody {
 |---|---|---|---|
 | `search` | טקסט, עד 100 תווים | – | מחפש **בשם האירוע** או **בשם הלקוח**. חלק מהמילה מספיק, ואין הבדל בין אותיות גדולות לקטנות |
 | `eventType` | EventType | – | סינון לפי סוג |
-| `status` | EventStatus | – | סינון לפי סטטוס |
+| `status` | EventStatus | – | סינון לפי סטטוס, כולל `Pending` (בקשות ממתינות) ו־`Rejected` |
 | `packageId` | מספר שלם חיובי | – | סינון לפי חבילה |
-| `sortBy` | `eventDate` / `budget` / `clientName` | `eventDate` | שדה המיון |
+| `minBudget` | מספר, 0 ומעלה | – | תקציב מינימלי (כולל) |
+| `maxBudget` | מספר, 0 ומעלה | – | תקציב מקסימלי (כולל). `minBudget` גדול מ־`maxBudget` מחזיר `400` |
+| `sortBy` | `eventDate` / `budget` / `clientName` / `eventName` / `createdAt` | `eventDate` | שדה המיון |
 | `sortDir` | `asc` / `desc` | `desc` | כיוון המיון |
 | `page` | מספר שלם, 1 ומעלה | `1` | מספר העמוד |
 | `limit` | מספר שלם, 1–100 | `10` | אירועים בעמוד |
@@ -1221,15 +1137,11 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 
 #### 11. `GET /events/my` 👤 – האירועים שלי
 
-- מחזיר רק את האירועים שמשויכים למשתמש המחובר (`userId` מה־Token).
+- מחזיר רק את האירועים **והבקשות** שמשויכים למשתמש המחובר (`userId` מה־Token), כולל `Pending` ו־`Rejected`.
 
-**Query Parameters (רשות):**
-| פרמטר | ערכים | ברירת מחדל |
-|---|---|---|
-| `page` | מספר שלם, 1 ומעלה | `1` |
-| `limit` | מספר שלם, 1–100 | `10` |
+**Query Parameters (רשות):** אותם פרמטרים כמו ב־`GET /events` – `search`, `eventType`, `status`, `packageId`, `minBudget`, `maxBudget`, `sortBy`, `sortDir`, `page`, `limit` – עם אותם ערכים, ברירות מחדל ושגיאות. הסינון חל תמיד רק על האירועים של המשתמש המחובר.
 
-**Response `200`:** `Paginated<EventItem>`, מהתאריך המאוחר למוקדם. אצל לקוח **אין `notes`**.
+**Response `200`:** `Paginated<EventItem>`, כברירת מחדל מהתאריך המאוחר למוקדם. אצל לקוח **אין `notes`**.
 ```json
 {
   "data": [
@@ -1264,7 +1176,7 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 | 400 | `page` או `limit` לא תקינים |
 | 401 | לא מחובר |
 
-> לקוחה שעוד לא אימתה את האימייל תקבל `data: []` עם `totalItems: 0`. הציגי הודעה כמו "אמתי את כתובת האימייל כדי לראות את האירועים שלך".
+> לקוחה חדשה מקבלת `data: []` עד שתשלח בקשה. אירוע שהמנהלת פתחה לכתובת שלה מקושר אליה רק כשהבעלות על הכתובת הוכחה (`emailVerified=true`, פרק 2.2).
 
 #### 12. `GET /events/:id` 👤 – אירוע בודד
 
@@ -1365,7 +1277,7 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 
 **חשוב:**
 - **המרת מספרים:** ערכים מ־`<input>` מגיעים **כמחרוזות**. המירי את `packageId`, `guestCount` ו־`budget` עם `Number(...)` לפני השליחה. מחרוזת כמו `"80"` תחזיר `400 guestCount must be a number`.
-- **אין לשלוח `userId`.** השרת מקשר את האירוע לבד לפי `clientEmail`, ורק ללקוחה רשומה **ומאומתת**. אם אין לקוחה כזו, `userId` יהיה `null`. כשהלקוחה תירשם ותאמת את האימייל, הקישור יתבצע אוטומטית.
+- **אין לשלוח `userId`.** השרת מקשר את האירוע לבד לפי `clientEmail`, ורק ללקוחה שהבעלות שלה על הכתובת הוכחה (`emailVerified=true` – התחברות Google מ־Gmail / Workspace, או חשבון שאומת בעבר). אם אין לקוחה כזו, `userId` יהיה `null`, והאירוע יקושר כשבעלת הכתובת תתחבר עם Google. חשבון סיסמה רגיל עם אותה כתובת **לא** מקבל אותו – כדי שמי שנרשם עם כתובת של אחרת לא יראה את האירוע.
 - **לקוחות לא יוצרות אירועים.** רק המנהלת יוצרת אירועים.
 
 #### 14. `PUT /events/:id` 👑 – עריכת אירוע (החלפה מלאה)
@@ -1375,7 +1287,7 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 
 **Response `200`:** `EventItem` מעודכן, עם `photos`.
 
-**שגיאות:** 400, 401, 403, 404 (`Event not found`).
+**שגיאות:** 400, 401, 403, 404 (`Event not found`), 409 (האירוע הוא בקשה `Pending` או `Rejected` – קודם מאשרים או דוחים, ראי פרק 4.8).
 
 > ⚠️ **זו החלפה מלאה:**
 > - **`status`:** אם לא שולחים אותו, הסטטוס הקיים **נשמר**.
@@ -1398,9 +1310,9 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 
 **Response `200`:** `EventItem` מעודכן, עם `photos`.
 
-**שגיאות:** 400 (סטטוס לא תקין), 401, 403, 404.
+**שגיאות:** 400 (סטטוס לא תקין, כולל `Pending` / `Rejected`), 401, 403, 404, 409 (האירוע הוא בקשה `Pending` או `Rejected` – קודם מאשרים או דוחים).
 
-> אפשר לעבור לכל סטטוס, ולא רק לפי הסדר.
+> אפשר לעבור לכל סטטוס תפעולי, ולא רק לפי הסדר.
 
 #### 16. `DELETE /events/:id` 👑 – מחיקת אירוע
 
@@ -1547,6 +1459,72 @@ GET /events?search=נועה&status=Planning&sortBy=budget&sortDir=asc&page=1&lim
 
 ---
 
+### 4.8 בקשות לקוחות לעיצוב אירוע
+
+בקשה היא רשומת `Event` רגילה בסטטוס `Pending`. **אישור** מעביר אותה ל־`New` (אותה רשומה, בלי ליצור חדשה), ומאותו רגע המנהלת מנהלת את הסטטוס כרגיל. **דחייה** מעבירה ל־`Rejected`, והרשומה נשמרת במסד וגלויה ללקוחה עם הסיבה.
+
+**כללים שהשרת אוכף (גם בבקשות מקבילות – בנעילות Transaction ובאינדקס ייחודי חלקי):**
+- רק משתמשת בתפקיד `Client` עם **אימייל מאומת** שולחת בקשות. מנהלת מקבלת `403`.
+- הבעלים, השם והאימייל נקבעים בשרת לפי המשתמשת המחוברת – לא מהגוף.
+- עד **5 בקשות `Pending`** לכל לקוחה בו־זמנית.
+- **כפילות:** אותה לקוחה + אותו שם אירוע (בלי הבדל אותיות) + אותו תאריך – כשקיימת בקשה ממתינה או אירוע שאושר. שם או תאריך אחרים הם בקשה חדשה ולגיטימית. אחרי דחייה מותר לשלוח שוב.
+- עריכה – רק בעלת הבקשה, ורק ב־`Pending`. עריכה ואישור במקביל: העריכה לעולם לא משנה אירוע שאושר.
+- אישור ודחייה – רק מנהלת, ורק ב־`Pending`. אישור כפול או אישור ודחייה במקביל: רק הראשון מצליח, השני מקבל `409`.
+- תמונות לאירוע (פרק 4.7) – רק אחרי אישור.
+
+**גוף הבקשה (`EventRequestInput`) – Allowlist מפורשת. כל שדה אחר (`status`, `userId`, `clientEmail`, `notes`, `coverImageUrl`...) מחזיר `400`:**
+
+| שדה | טיפוס | חובה | כללים |
+|---|---|---|---|
+| `eventName` | string | ✔ | 2–120 תווים |
+| `eventType` | EventType | ✔ | |
+| `eventDate` | string | ✔ | `YYYY-MM-DD`, לא בעבר (לפי שעון ישראל) |
+| `location` | string | ✔ | 2–200 תווים |
+| `packageId` | number | ✔ | חבילה פעילה מאותו סוג אירוע, או חבילה כללית |
+| `themeColor` | string | ✔ | 1–30 תווים |
+| `guestCount` | number | ✔ | שלם, 1–100,000 |
+| `budget` | number | ✔ | 0 ומעלה, עד 2 ספרות אחרי הנקודה |
+| `description` | string | ✔ | קונספט העיצוב, 10–2000 תווים |
+| `clientNotes` | string \| null | ✘ | הערות מיוחדות, עד 1000 תווים. `""` נשמר כ־`null` |
+
+#### 34. `POST /events/requests` – לקוחה מחוברת: בקשה חדשה
+
+**Response `201`:** `EventItem` עם `status: "Pending"` ו־`photos: []`.
+
+**שגיאות:**
+| HTTP | code | מתי |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | שדה חסר או לא תקין, תאריך בעבר, חבילה שלא מתאימה לסוג, או שדה מחוץ ל־Allowlist |
+| 401 | | לא מחובר |
+| 403 | `FORBIDDEN` | המשתמש הוא מנהלת |
+| 409 | `CONFLICT` | בקשה כפולה, או 5 בקשות ממתינות כבר קיימות (`details: { limit, current }`) |
+
+#### 35. `PATCH /events/:id/request` – בעלת הבקשה: עריכת בקשה ממתינה
+
+- **Body:** אותם שדות כמו ב־34, כולם רשות – **לפחות שדה אחד**. שולחים רק את מה שהשתנה. תאריך שלא נשלח לא נבדק שוב מול "היום".
+- **Response `200`:** `EventItem` מעודכן, עם `photos`.
+
+**שגיאות:** `400` (שדה לא תקין או גוף ריק), `401`, `403` (בקשה של לקוחה אחרת, או מנהלת), `404`, `409` (הבקשה כבר אושרה או נדחתה, האירוע נוצר בידי המנהלת, או שהעריכה יוצרת כפילות).
+
+#### 36. `POST /events/:id/approve` 👑 – אישור בקשה
+
+- **Body:** אין.
+- **Response `200`:** `EventItem` עם `status: "New"`, `reviewedAt` ו־`reviewedById`.
+
+**שגיאות:** `401`, `403`, `404`, `409` (`This request was already reviewed` – הבקשה כבר אושרה או נדחתה, או שזה אירוע תפעולי).
+
+#### 37. `POST /events/:id/reject` 👑 – דחיית בקשה
+
+- **Body (רשות):** `{ "reason": "התאריך כבר תפוס" }` – עד 500 תווים, גלוי ללקוחה. `""` או גוף ריק נשמרים כ־`null`.
+- **Response `200`:** `EventItem` עם `status: "Rejected"`, `rejectionReason`, `reviewedAt` ו־`reviewedById`.
+
+**שגיאות:** `400` (סיבה ארוכה מדי או שדה לא מוכר), `401`, `403`, `404`, `409` (הבקשה כבר טופלה).
+
+**איך מציגים בקשות:**
+- רשימת הלקוחה: `GET /events/my` (אפשר `status=Pending`).
+- רשימת הבקשות הממתינות של המנהלת: `GET /events?status=Pending&sortBy=createdAt&sortDir=asc`.
+- `PUT /events/:id` ו־`PATCH /events/:id/status` מחזירים `409` לבקשה `Pending` / `Rejected` – בממשק הניהול מציגים לבקשה כפתורי אישור ודחייה במקום עריכה.
+
 ### 4.6 System
 
 #### 19. `GET /health` 🌐 – בדיקת פעילות
@@ -1688,8 +1666,6 @@ export function thumb(url: string, width = 600): string {
 | 200 / 201 | – | הצלחה (201 = נוצר) | |
 | 204 | – | מחיקה הצליחה. **אין גוף תשובה** | אל תקראי ל־`response.json()`. הסירי את הפריט מהרשימה |
 | 400 | `VALIDATION_ERROR` | קלט לא תקין: Zod, JSON שבור, פרמטר לא תקין או בעיה בהעלאה | הציגי שגיאה ליד כל שדה לפי `details[].field` |
-| 400 | `INVALID_CODE` | קוד אימות שגוי, או שאין קוד פעיל | הציגי את `details.attemptsLeft` אם קיים, והציעי "שלחי קוד חדש" |
-| 400 | `CODE_EXPIRED` | עברו 10 דקות | "הקוד פג תוקף" + כפתור שליחה חוזרת |
 | 401 | `UNAUTHORIZED` | אין Token, ה־Token לא תקין או פג תוקף, או שהמשתמש נמחק | מחקי את ה־Token ועברי ל־`/login` |
 | 401 | `INVALID_CREDENTIALS` | אימייל או סיסמה שגויים בהתחברות (גם למשתמש שנרשם רק עם Google) | "אימייל או סיסמה שגויים". **לא** לבצע התנתקות אוטומטית |
 | 401 | `GOOGLE_AUTH_FAILED` | טוקן Google לא תקין או פג תוקף, או אימייל לא מאומת ב־Google | "ההתחברות עם Google נכשלה, נסי שוב". **לא** לבצע התנתקות אוטומטית |
@@ -1719,8 +1695,6 @@ export function thumb(url: string, width = 600): string {
 | Zod Validation | מערך: `[{ "field": "eventDate", "message": "eventDate must be a valid date in format YYYY-MM-DD" }]` |
 | שדה מיותר בגוף | `[{ "field": "", "message": "Unrecognized keys: \"userId\"" }]` (השדה `field` ריק) |
 | חבילה לא קיימת | `[{ "field": "packageId", "message": "Package does not exist" }]` |
-| קוד אימות שגוי | אובייקט: `{ "attemptsLeft": 3 }` |
-| המתנה לשליחה חוזרת | אובייקט: `{ "retryAfterSeconds": 42 }` |
 | JSON שבור, בעיית העלאה, 401, 403, 404 | אין `details` |
 
 > `field` של שדה מקונן מופיע עם נקודה, למשל `"a.b"`. אצלנו כל השדות שטוחים, ולכן `field` הוא תמיד שם השדה עצמו.
@@ -1746,8 +1720,6 @@ export function thumb(url: string, width = 600): string {
 export const ERROR_MESSAGES_HE: Record<string, string> = {
   VALIDATION_ERROR: 'יש שדות לא תקינים בטופס',
   INVALID_CREDENTIALS: 'אימייל או סיסמה שגויים',
-  INVALID_CODE: 'קוד האימות שגוי',
-  CODE_EXPIRED: 'קוד האימות פג תוקף. בקשי קוד חדש',
   UNAUTHORIZED: 'יש להתחבר מחדש',
   FORBIDDEN: 'אין לך הרשאה לפעולה הזו',
   NOT_FOUND: 'הפריט לא נמצא',
@@ -1881,11 +1853,7 @@ import type {
 
 export const authApi = {
   register: (data: { fullName: string; email: string; phone: string; password: string }) =>
-    apiRequest<AuthResult & { message: string; verificationEmailSent: boolean }>('/auth/register', { method: 'POST', body: data }),
-  verifyEmail: (email: string, code: string) =>
-    apiRequest<AuthResult & { message: string; linkedEventsCount: number }>('/auth/verify-email', { method: 'POST', body: { email, code } }),
-  resendCode: (email: string) =>
-    apiRequest<{ message: string }>('/auth/resend-code', { method: 'POST', body: { email } }),
+    apiRequest<AuthResult & { message: string }>('/auth/register', { method: 'POST', body: data }),
   login: (email: string, password: string) =>
     apiRequest<AuthResult>('/auth/login', { method: 'POST', body: { email, password } }),
   /** idToken = ה־credential שהתקבל מכפתור Google */
@@ -2004,8 +1972,7 @@ async function handleLogin(email: string, password: string) {
     const { token, user } = await authApi.login(email, password);
     tokenStorage.set(token);
     setUser(user);                         // State גלובלי של המשתמש, לפי הבחירה שלך
-    if (!user.emailVerified) navigate('/verify-email', { state: { email: user.email } });
-    else navigate(user.role === 'Admin' ? '/admin/events' : '/my-events');
+    navigate(user.role === 'Admin' ? '/admin/events' : '/my-events');
   } catch (e) {
     const code = e instanceof ApiError ? e.code : 'INTERNAL_ERROR';
     setError(ERROR_MESSAGES_HE[code] ?? ERROR_MESSAGES_HE.INTERNAL_ERROR);
@@ -2017,32 +1984,11 @@ async function handleLogin(email: string, password: string) {
 ```
 
 ```ts
-// הרשמה → שמירת Token → מעבר למסך הקוד
+// הרשמה → שמירת Token → ישר לאזור האישי (אין קוד אימות)
 const res = await authApi.register({ fullName, email, phone, password });
 tokenStorage.set(res.token);
 setUser(res.user);
-navigate('/verify-email', { state: { email: res.user.email, emailSent: res.verificationEmailSent } });
-
-// אימות קוד → החלפת Token
-try {
-  const res = await authApi.verifyEmail(email, code.trim());
-  tokenStorage.set(res.token);
-  setUser(res.user);
-} catch (e) {
-  if (e instanceof ApiError && e.code === 'INVALID_CODE') {
-    const left = (e.details as { attemptsLeft?: number } | undefined)?.attemptsLeft;
-    setError(left !== undefined ? `קוד שגוי. נותרו ${left} ניסיונות` : 'הקוד אינו תקף. בקשי קוד חדש');
-  }
-}
-
-// שליחה חוזרת, עם ספירה לאחור
-try {
-  await authApi.resendCode(email);
-  setSecondsLeft(60);
-} catch (e) {
-  const wait = e instanceof ApiError ? (e.details as { retryAfterSeconds?: number } | undefined)?.retryAfterSeconds : undefined;
-  if (wait) setSecondsLeft(wait);
-}
+navigate('/my-events');
 
 // טעינת האפליקציה: בדיקה אם ה־Token השמור עדיין תקף
 useEffect(() => {
@@ -2191,8 +2137,7 @@ import { GoogleLogin } from '@react-oauth/google';
       const { token, user, isNewUser } = await authApi.google(credential);  // credential = ID Token
       tokenStorage.set(token);              // אותו JWT כמו בהתחברות רגילה
       setUser(user);
-      if (!user.emailVerified) navigate('/verify-email', { state: { email: user.email } });
-      else if (isNewUser && !user.phone) navigate('/profile');   // הצעה להשלים טלפון (רשות)
+      if (isNewUser && !user.phone) navigate('/profile');   // הצעה להשלים טלפון (רשות)
       else navigate(user.role === 'Admin' ? '/admin/events' : '/my-events');
     } catch (e) {
       // 409: חשבון קיים שלא ניתן לקשר. ההודעה מהשרת מסבירה מה לעשות
@@ -2331,14 +2276,16 @@ function AdminEventsTable() {
 | **גלריה של סוג** `/gallery/:category` | הצגת עבודות של סוג אירוע | `GET /gallery?category=...&page=...&limit=...` | תמונות (`url`, `title`) + פקדי עמודים או "טען עוד" | מעבר בין עמודים | 🌐 |
 | **חבילות** `/packages` | מחירון לפי סוג אירוע | `GET /packages?eventType=...` | בחירת סוג אירוע, ואז `name`, `description`, `price`, `features[]`, `imageUrl`. חלוקה ל"חבילות הסוג" ו"חבילות כלליות" לפי `eventType`. הסבר שהזמנה נעשית ביצירת קשר | בחירת סוג אירוע | 🌐 |
 | **ניהול חבילות** `/admin/packages` | ניהול המחירון | `GET /admin/packages`, `POST /packages`, `PUT /packages/:id`, `DELETE /packages/:id` | טבלה: שם, סוג (או "כללית"), מחיר, `sortOrder`, פעילה/ארכיון, `eventCount` | יצירה, עריכה ועדכון מחיר, שינוי סדר, העברה לארכיון והחזרה | 👑 |
-| **הרשמה** `/register` | פתיחת חשבון לקוחה | `POST /auth/register`, `POST /auth/google` | טופס: `fullName`, `email`, `phone`, `password` + שגיאות שדה, וכפתור "המשך עם Google" | שליחת טופס ואז מעבר לאימות, או הרשמה עם Google | 🌐 |
-| **אימות אימייל** `/verify-email` | הזנת קוד בן 6 ספרות | `POST /auth/verify-email`, `POST /auth/resend-code` | אימייל, שדה קוד, ניסיונות שנותרו, ספירה לאחור | אימות, שליחה חוזרת | 🌐 (אחרי הרשמה, התחברות, או התחברות Google עם כתובת שאינה Gmail) |
-| **התחברות** `/login` | כניסה למערכת | `POST /auth/login`, `POST /auth/google` | טופס: `email`, `password`, וכפתור "המשך עם Google" | התחברות עם סיסמה או עם Google. אם `emailVerified=false`, מעבר לאימות | 🌐 |
+| **הרשמה** `/register` | פתיחת חשבון לקוחה | `POST /auth/register`, `POST /auth/google` | טופס: `fullName`, `email`, `phone`, `password` + שגיאות שדה, וכפתור "המשך עם Google" | שליחת טופס ואז ישר לאזור האישי, או הרשמה עם Google | 🌐 |
+| **התחברות** `/login` | כניסה למערכת | `POST /auth/login`, `POST /auth/google` | טופס: `email`, `password`, וכפתור "המשך עם Google" | התחברות עם סיסמה או עם Google, ואז ישר לאזור האישי | 🌐 |
 | **טעינת האפליקציה** (ללא מסך) | שחזור התחברות אחרי רענון | `GET /auth/me` | – | – | Token שמור |
 | **הפרופיל שלי** `/profile` | צפייה בפרטים ועריכתם | `GET /auth/me`, `PATCH /auth/me` | `fullName`, `phone`, `address` (ניתנים לעריכה), `email` (לקריאה בלבד), `role`, `emailVerified`, `googleLinked` | שמירת שם, טלפון וכתובת, ומחיקת כתובת | 👤 (Client או Admin) |
-| **האירועים שלי** `/my-events` | הלקוחה רואה את האירועים שלה | `GET /events/my?page=...&limit=...` | `eventName`, `eventDate`, `eventType`, `status`, `package.name`, `photoCount` + פקדי עמודים | מעבר לפרטי אירוע, מעבר בין עמודים | 👤 |
+| **האירועים שלי** `/my-events` | הלקוחה רואה את האירועים והבקשות שלה | `GET /events/my?...&page=...&limit=...` | `eventName`, `eventDate`, `eventType`, `status`, `budget`, `description`, `package.name`, `photoCount` + פקדי עמודים | חיפוש, סינון (סוג, סטטוס, טווח תקציב), מיון, מעבר לפרטים, עריכת בקשה ממתינה, בקשה חדשה | 👤 |
+| **בקשה חדשה** `/my-events/new` | שליחת בקשה לעיצוב | `GET /packages?eventType=...`, `POST /events/requests` | טופס `EventRequestInput` | שליחה, ואז מעבר לפרטי הבקשה | 👤 לקוחה מאומתת |
+| **עריכת בקשה** `/my-events/:id/edit` | תיקון בקשה ממתינה | `GET /events/:id`, `GET /packages?eventType=...`, `PATCH /events/:id/request` | הטופס עם הערכים הקיימים. בקשה שאושרה או נדחתה – הודעה שהיא נעולה | שמירת השדות שהשתנו | 👤 בעלת הבקשה, `Pending` בלבד |
 | **פרטי האירוע שלי** `/my-events/:id` | סטטוס ההכנות ותמונות | `GET /events/:id`, `POST /events/:id/photos`, `GET /events/:id/photos/:photoId`, `DELETE /events/:id/photos/:photoId`, `PUT /events/:id/photos/:photoId/consent` | כל פרטי האירוע (בלי `notes`), `status` כפס התקדמות, `photos[]` (קישורים זמניים), סימון "בגלריה" לפי `publishedInGallery` | צפייה בתמונות, העלאה (עד 50), מחיקת תמונות שהעלתה (`canDelete`), מתג "מסכימה לפרסום" לכל תמונה | 👤 בעלת האירוע |
-| **ניהול אירועים** `/admin/events` | טבלת כל האירועים | `GET /events?...&page=...&limit=...`, `GET /packages` (למסנן החבילה), `PATCH /events/:id/status`, `DELETE /events/:id` | טבלה: שם אירוע, לקוח, תאריך, סוג, חבילה, תקציב, סטטוס, מספר תמונות + "עמוד X מתוך Y" ו־`totalItems` | חיפוש, סינון (סוג, סטטוס, חבילה), מיון (תאריך, תקציב, שם לקוח), מעבר בין עמודים, שינוי סטטוס, מחיקה, מעבר ליצירה או עריכה | 👑 |
+| **ניהול אירועים** `/admin/events` | טבלת כל האירועים | `GET /events?...&page=...&limit=...`, `GET /packages` (למסנן החבילה), `PATCH /events/:id/status`, `DELETE /events/:id` | טבלה: שם אירוע, לקוח, תאריך, סוג, חבילה, תקציב, סטטוס, מספר תמונות + "עמוד X מתוך Y" ו־`totalItems` | חיפוש, סינון (סוג, סטטוס, חבילה, טווח תקציב), לשונית "בקשות ממתינות" (`status=Pending`), מיון, מעבר בין עמודים, שינוי סטטוס, מחיקה, מעבר ליצירה או עריכה | 👑 |
+| **פרטי אירוע / בקשה** `/admin/events/:id` | בדיקת בקשה וניהול סטטוס | `GET /events/:id`, `POST /events/:id/approve`, `POST /events/:id/reject`, `PATCH /events/:id/status` | כל הפרטים, כולל `description`, `clientNotes`, `notes`, `rejectionReason` | בבקשה `Pending`: אישור או דחייה עם סיבה. אחרי אישור: שינוי סטטוס | 👑 |
 | **אירוע חדש** `/admin/events/new` | יצירת אירוע | `GET /packages`, `POST /events` | טופס עם כל שדות `EventInput` | שמירה | 👑 |
 | **עריכת אירוע** `/admin/events/:id/edit` | עריכה וניהול תמונות | `GET /events/:id`, `GET /packages`, `PUT /events/:id`, `POST /events/:id/photos`, `DELETE /events/:id/photos/:photoId`, `POST /events/:id/photos/:photoId/publish` | טופס מלא עם הערכים הקיימים (כולל `notes`), תמונות האירוע, סימון "יש הסכמה" (`publishConsent`) ו"בגלריה" (`galleryItemId`) | שמירה, העלאת תמונות, מחיקת תמונה, פרסום תמונה שיש לה הסכמה | 👑 |
 | **תמונות לפרסום** `/admin/event-photos` | תמונות שקיבלו הסכמה וממתינות לפרסום | `GET /admin/event-photos?publishConsent=true&inGallery=false`, `POST /events/:id/photos/:photoId/publish` | רשת תמונות עם שם האירוע והלקוחה (`event`) | פרסום בגלריה (כותרת, סוג, מובילה, סדר) | 👑 |
@@ -2363,6 +2310,9 @@ function AdminEventsTable() {
 | אימות אימייל | `200` + Token ומשתמש חדשים | שמירת ה־Token וטעינה מחדש של `/events/my` |
 | התחברות עם Google | `200` + Token, משתמש ו־`isNewUser` | שמירת ה־Token והמשתמש, כמו בהתחברות רגילה |
 | עריכת פרופיל | `200` + `{ user }` המעודכן | החלפת המשתמש ב־State. ה־Token לא משתנה |
+| שליחת בקשה | `201` + הבקשה (`Pending`) | מעבר לפרטי הבקשה וטעינה מחדש של `/events/my` |
+| עריכת בקשה | `200` + הבקשה המעודכנת | החלפת הבקשה לפי `id` |
+| אישור / דחייה | `200` + האירוע המעודכן | החלפת האירוע לפי `id`, וטעינה מחדש של הרשימה ומונה הבקשות הממתינות |
 
 - **טבלה עם מסננים ועמודים:** אחרי שינוי בטבלה שיש בה חיפוש, סינון, מיון או עמודים, הכי בטוח לקרוא שוב ל־`GET /events` עם אותם פרמטרים, כולל `page`. אם מחקת את הפריט האחרון בעמוד, עברי לעמוד הקודם.
 - **מניעת שליחה כפולה:** השביתי את כפתור "שמירה" בזמן שהבקשה נשלחת.
@@ -2397,11 +2347,12 @@ function AdminEventsTable() {
 | **יצירת Admin נוסף** | אין. Admin נוצר רק ב־Seed | – |
 | **מחיקה פיזית של חבילה** | אין. רק העברה לארכיון (`DELETE /packages/:id`) | – |
 | **העלאת תמונה לחבילה** | אין. `imageUrl` הוא כתובת https | הזנת כתובת |
-| **תשלום או הזמנה אוטומטית** | אין. המחירון להצגה בלבד | יצירת קשר עם הסטודיו |
+| **תשלום מקוון** | אין. המחירון להצגה בלבד | בקשה לעיצוב (פרק 4.8) או יצירת קשר עם הסטודיו |
 | **מחיר שסוכם בהזמנה** | אין שדה כזה. `budget` הוא תקציב העיצוב, ומחיר החבילה לא נשמר בהזמנה | – |
-| **הזמנה או בקשת שירות של לקוחה** | אין. **רק המנהלת יוצרת אירועים** | – |
+| **ביטול / מחיקת בקשה בידי הלקוחה** | אין. בקשה ממתינה אפשר לערוך; מחיקה – רק מנהלת (`DELETE /events/:id`) | – |
+| **התראה ללקוחה על אישור או דחייה** | אין שירות מיילים | הסטטוס מוצג באזור האישי |
 | **טופס "צור קשר"** | אין | – |
-| **שליחת מיילים** (קוד אימות, התראות) | אין. אין שירות מיילים חיצוני; קוד האימות מודפס ביומן השרת | לא להבטיח למשתמשת שתקבל מייל |
+| **שליחת מיילים** (התראות) | אין שירות מיילים ואין אימות אימייל בקוד | לא להבטיח למשתמשת שתקבל מייל |
 | **החלפת הקובץ של פריט גלריה** | אין. `PATCH` משנה רק פרטים | העלאת פריט חדש ומחיקת הישן |
 | **פרסום ישיר בידי לקוחה** | אין. הלקוחה נותנת הסכמה, ורק המנהלת מפרסמת | – |
 | **קישור קבוע לתמונת אירוע פרטית** | אין, בכוונה. רק קישורים זמניים | לבקש קישור חדש כשפג |
@@ -2417,14 +2368,14 @@ function AdminEventsTable() {
 
 | בדיקה | תוצאה |
 |---|---|
-| כל הנתיבים ב־`src/routes/index.ts` מתועדים במדריך | ✅ 33 מתוך 33 |
+| כל הנתיבים ב־`src/routes/index.ts` מתועדים במדריך | ✅ 35 מתוך 35 |
 | כל הנתיבים במדריך קיימים בשרת | ✅ אין Endpoints מומצאים |
 | שדות הבקשה תואמים ל־Zod Schemas (`src/schemas/*`) | ✅ שמות, חובה או רשות, טווחים והודעות שגיאה |
 | שדות התגובה תואמים ל־`src/utils/mappers.ts` | ✅ כולל `notes` רק למנהלת, `photoCount` רק ברשימות, `photos` רק באירוע בודד, ושדות האחסון של תמונה (`publicId`, `storageType`...) רק למנהלת |
 | הרשאות תואמות ל־Middleware (`authenticate`, `requireAdmin`) ולבדיקת הבעלות ב־Service | ✅ |
 | מגבלות העלאה תואמות ל־`src/middleware/upload.ts` | ✅ |
 | קודי השגיאה תואמים ל־`HttpError` ול־`errorHandler` | ✅ |
-| התאמה ל־Swagger (`/api-docs`, `docs/openapi.json`) | ✅ אותן 33 פעולות, אותם נתיבים, Methods, הרשאות ומבני נתונים, כולל `Pagination`, `GoogleLoginRequest` ו־`UpdateProfileRequest` |
+| התאמה ל־Swagger (`/api-docs`, `docs/openapi.json`) | ✅ אותן 35 פעולות, אותם נתיבים, Methods, הרשאות ומבני נתונים, כולל `Pagination`, `GoogleLoginRequest` ו־`UpdateProfileRequest` |
 | מבנה הרשימות (`{ data, pagination }`) תואם ל־`src/utils/pagination.ts` | ✅ |
 | כללי Google ותוצאות הקישור תואמים ל־`src/services/auth.service.ts` ול־`src/auth/googleToken.ts` | ✅ |
 
@@ -2452,9 +2403,9 @@ function AdminEventsTable() {
 **נתונים נוספים:**
 - 3 חבילות: Basic (1200), Premium (2800) ו־Luxury (5500).
 - 10 פריטי גלריה.
-- 6 אירועים. 2 מהם שייכים ללקוחות שאינם רשומים, כך שאפשר לבדוק את הקישור האוטומטי אחרי הרשמה ואימות. האימיילים שלהם הם `shira.avraham@example.com` ו־`yossi.mizrahi@example.com`.
+- 6 אירועים. 2 מהם שייכים לכתובות שאין להן חשבון (`shira.avraham@example.com`, `yossi.mizrahi@example.com`), ולכן הם נשארים בלי `userId`. הם מקושרים אוטומטית רק לחשבון שהבעלות שלו על הכתובת הוכחה (פרק 2.2).
 
-**לבדיקת הרשמה** (`EMAIL_PROVIDER=console`): קוד האימות מודפס בטרמינל של השרת. אין שליחת מייל.
+**לבדיקת הרשמה:** אין קוד אימות – נרשמים ונכנסים מיד.
 
 ---
 
@@ -2483,7 +2434,7 @@ function AdminEventsTable() {
    - **Authorized JavaScript origins:** הוסיפי את כתובות צד הלקוח:
      - `http://localhost:5173` (פיתוח מקומי ב־Vite)
      - `http://localhost` (Google דורש אותה גם כן בפיתוח מקומי עם הכפתור)
-     - אחרי פריסה: הכתובת של צד הלקוח בענן, למשל `https://eventstyle.vercel.app`
+     - אחרי פריסה: הכתובת של צד הלקוח בענן, למשל `https://eventstyle-client.onrender.com` (ראו DEPLOYMENT.md)
    - **Authorized redirect URIs:** **לא צריך.** הכפתור עובד בחלון קופץ, בלי הפניה.
 4. **העתקת הערך:** לחצי **Create**, והעתיקי את ה־**Client ID**. הוא נראה כך: `1234567890-abc...xyz.apps.googleusercontent.com`.
    - **Client secret:** Google מציג גם אותו. **אין בו צורך** בשיטה הזו, ואין לשים אותו בשום קובץ.

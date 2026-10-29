@@ -29,6 +29,9 @@ enum EventStatus {
   Preparing
   Ready
   Completed
+  // בקשה של לקוחה שממתינה לאישור המנהלת. אישור → New, דחייה → Rejected (סופי, הרשומה נשמרת)
+  Pending
+  Rejected
 }
 
 // סוג האחסון של תמונת אירוע ב-Cloudinary (תואם ל-ImageAccess בקוד):
@@ -65,6 +68,7 @@ model User {
 
   events         Event[]
   uploadedPhotos EventPhoto[]
+  reviewedEvents Event[]      @relation("EventReviewer")
 
   @@map("Users")
 }
@@ -108,20 +112,31 @@ model Event {
   budget        Decimal     @db.Decimal(12, 2)
   status        EventStatus @default(New)
   coverImageUrl String?     @db.VarChar(500)
+  // הערות פנימיות של המנהלת – לעולם לא נשלחות ללקוחה
   notes         String?     @db.VarChar(2000)
+  // קונספט העיצוב והערות מיוחדות – נכתבים בבקשת הלקוחה וגלויים לה
+  description     String?   @db.VarChar(2000)
+  clientNotes     String?   @db.VarChar(1000)
+  // סיבת דחייה (רשות) – גלויה ללקוחה
+  rejectionReason String?   @db.VarChar(500)
+  // מי אישרה / דחתה את הבקשה ומתי. null באירועים שנוצרו בידי המנהלת
+  reviewedAt      DateTime?
+  reviewedById    Int?
   userId        Int?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  package Package      @relation(fields: [packageId], references: [id], onDelete: Restrict)
-  user    User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  photos  EventPhoto[]
+  package    Package      @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  user       User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  reviewedBy User?        @relation("EventReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  photos     EventPhoto[]
 
   @@index([eventDate])
   @@index([status])
   @@index([eventType])
   @@index([packageId])
   @@index([userId])
+  @@index([reviewedById])
   @@index([clientEmail])
   @@index([clientName])
   @@index([eventName])

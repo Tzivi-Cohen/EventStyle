@@ -1,8 +1,0 @@
-/** הגדרות קוד האימות במייל */
-export const VERIFICATION = {
-  CODE_TTL_MINUTES: 10,
-  MAX_WRONG_ATTEMPTS: 5,
-  RESEND_COOLDOWN_SECONDS: 60,
-  MAX_SENDS_PER_WINDOW: 5,
-  SEND_WINDOW_MINUTES: 60,
-} as const;

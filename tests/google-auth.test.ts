@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from '../src/config/env';
-import { api, createUser, eventBody, createAdmin, mailer, prisma, resetDatabase } from './helpers';
+import { api, createUser, eventBody, createAdmin, prisma, resetDatabase } from './helpers';
 
 /**
  * הבדיקות מריצות את האימות האמיתי של google-auth-library (חתימה, issuer, audience, תוקף).
@@ -97,7 +97,7 @@ describe('Google sign-in – new users', () => {
     expect(my.body.data).toHaveLength(1);
   });
 
-  it('a non-Google email domain is NOT trusted: account is unverified until the email code is confirmed', async () => {
+  it('a non-Google email domain is NOT trusted: the account works, but admin-created events are not linked by email', async () => {
     const admin = await createAdmin();
     await api.post('/api/events').set('Authorization', admin.auth).send(eventBody({ clientEmail: 'dana@company.co.il' })).expect(201);
 
@@ -106,13 +106,7 @@ describe('Google sign-in – new users', () => {
     expect(res.body.user.emailVerified).toBe(false);
     const auth = `Bearer ${res.body.token}`;
     expect((await api.get('/api/events/my').set('Authorization', auth)).body.data).toHaveLength(0);
-
-    // אימות רגיל בקוד במייל – גם למשתמש בלי סיסמה
-    await api.post('/api/auth/resend-code').send({ email: 'dana@company.co.il' }).expect(200);
-    const code = mailer.lastCodeFor('dana@company.co.il');
-    const verify = await api.post('/api/auth/verify-email').send({ email: 'dana@company.co.il', code });
-    expect(verify.status).toBe(200);
-    expect(verify.body.linkedEventsCount).toBe(1);
+    expect(await prisma.event.count({ where: { userId: null } })).toBe(1);
   });
 
   it('a Google Workspace domain (hd claim) is trusted', async () => {
@@ -323,14 +317,33 @@ describe('Google sign-in – reclaiming an unverified (squatted) email', () => {
     await api.get(`/api/events/${created.body.id}`).set('Authorization', squatter.auth).expect(401);
   });
 
-  it('the verification code of the squatter can no longer be used', async () => {
-    await squat();
-    const code = mailer.lastCodeFor(EMAIL)!;
-    await signIn(googleToken()).expect(200);
+  it('a squatted account that already has requests is NOT replaced or linked: 409, nothing changes', async () => {
+    const squatter = await squat();
+    await api
+      .post('/api/events/requests')
+      .set('Authorization', squatter.auth)
+      .send({
+        eventName: 'Squatter party',
+        eventType: 'Birthday',
+        eventDate: '2027-03-18',
+        location: 'Tel Aviv',
+        packageId: 1,
+        themeColor: 'Gold',
+        guestCount: 50,
+        budget: 3000,
+        description: 'A request sent before the real owner signed in',
+      })
+      .expect(201);
 
-    const verify = await api.post('/api/auth/verify-email').send({ email: EMAIL, code });
-    expect(verify.status).toBe(409); // החשבון כבר מאומת – אין קוד פעיל
-    expect(verify.body).not.toHaveProperty('token');
+    const res = await signIn(googleToken());
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toBe('An account with this email already exists. Sign in with your email and password');
+    expect(res.body).not.toHaveProperty('token');
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: EMAIL } });
+    expect(user).toMatchObject({ id: squatter.id, googleId: null, emailVerified: false });
+    expect(await prisma.event.count({ where: { userId: squatter.id } })).toBe(1);
+    await api.post('/api/auth/login').send({ email: EMAIL, password: 'Squatter1' }).expect(200);
   });
 
   it('after reclaiming, the same Google account signs in to the same user (no duplicates)', async () => {
@@ -410,7 +423,6 @@ describe('Google sign-in – reclaiming an unverified (squatted) email', () => {
 
   it('a concurrent password re-registration and Google sign-in never leave two accounts', async () => {
     await squat();
-    await prisma.user.update({ where: { email: EMAIL }, data: { verificationLastSentAt: new Date(Date.now() - 61_000) } });
     const [google, register] = await Promise.all([
       signIn(googleToken()),
       api.post('/api/auth/register').send({ fullName: 'Other', email: EMAIL, phone: '050-1111111', password: 'Other1234' }),

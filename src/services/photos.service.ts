@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Prisma, type EventPhoto, type GalleryItem } from '@prisma/client';
+import { Prisma, type EventPhoto, type EventStatus, type GalleryItem } from '@prisma/client';
 import { PHOTOS } from '../config/photos';
 import { prisma } from '../db/prisma';
 import { HttpError } from '../errors/HttpError';
@@ -41,7 +41,7 @@ const photoNotFound = () => HttpError.notFound('Photo not found for this event')
  * (כמו GET /api/events/:id).
  */
 export async function assertEventAccess(eventId: number, user: Express.AuthUser) {
-  const event = await prisma.event.findUnique({ where: { id: eventId }, select: { id: true, userId: true } });
+  const event = await prisma.event.findUnique({ where: { id: eventId }, select: { id: true, userId: true, status: true } });
   if (!event) throw HttpError.notFound('Event not found');
   if (user.role !== 'Admin' && (event.userId === null || event.userId !== user.id)) {
     throw HttpError.forbidden('You do not have access to this event');
@@ -88,12 +88,20 @@ export async function getEventPhoto(eventId: number, photoId: number, user: Expr
   return toPhotoDto(photo, viewerOf(user), createPhotoLink(photo));
 }
 
+/** לקוחה מעלה תמונות רק לאירוע שאושר – לא לבקשה ממתינה או שנדחתה */
+function assertRequestApproved(status: EventStatus) {
+  if (status === 'Pending' || status === 'Rejected') {
+    throw HttpError.conflict('Photos can be added only after the request is approved');
+  }
+}
+
 /**
  * בדיקה מוקדמת לפני קבלת הקבצים (לפני multer ועיבוד התמונות): הרשאה, ושהאירוע עוד לא מלא.
  * הבדיקה המחייבת נעשית שוב בתוך ה-Transaction שבו התמונות נשמרות.
  */
 export async function assertCanUpload(eventId: number, user: Express.AuthUser) {
-  await assertEventAccess(eventId, user);
+  const event = await assertEventAccess(eventId, user);
+  if (user.role !== 'Admin') assertRequestApproved(event.status);
   const count = await prisma.eventPhoto.count({ where: { eventId } });
   if (count >= MAX_PHOTOS_PER_EVENT) throw photoLimitReached(count, 1);
 }
@@ -167,11 +175,12 @@ export async function addEventPhotos(eventId: number, files: Express.Multer.File
   let photos: PhotoWithGallery[];
   try {
     photos = await prisma.$transaction(async (tx) => {
-      const [event] = await tx.$queryRaw<{ userId: number | null }[]>`
-        SELECT "userId" FROM "Events" WHERE id = ${eventId} FOR UPDATE`;
+      const [event] = await tx.$queryRaw<{ userId: number | null; status: EventStatus }[]>`
+        SELECT "userId", status FROM "Events" WHERE id = ${eventId} FOR UPDATE`;
       if (!event) throw HttpError.notFound('Event not found');
       // הבעלות עלולה להשתנות בזמן ההעלאה (למשל עריכת clientEmail בידי המנהלת)
       if (!isAdmin && event.userId !== user.id) throw HttpError.forbidden('You do not have access to this event');
+      if (!isAdmin) assertRequestApproved(event.status);
       await assertRoomForPhotos(tx, eventId, hashed);
 
       const created: PhotoWithGallery[] = [];

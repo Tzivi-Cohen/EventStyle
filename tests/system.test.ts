@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { parseCorsOrigins } from '../src/config/env';
 import { openApiDocument } from '../src/docs/openapi';
 import { api, prisma, resetDatabase } from './helpers';
 
@@ -35,6 +36,13 @@ describe('Health and packages', () => {
     const blocked = await api.get('/api/health').set('Origin', 'http://evil.example');
     expect(blocked.status).toBe(403);
   });
+
+  it('CORS_ORIGIN entries are trimmed and lose a trailing slash (the browser Origin never has one)', () => {
+    expect(parseCorsOrigins(' https://eventstyle.onrender.com/ , http://localhost:5173,')).toEqual([
+      'https://eventstyle.onrender.com',
+      'http://localhost:5173',
+    ]);
+  });
 });
 
 describe('Swagger / OpenAPI', () => {
@@ -43,7 +51,7 @@ describe('Swagger / OpenAPI', () => {
     await expect(SwaggerParser.validate(copy)).resolves.toBeTruthy();
   });
 
-  it('documents all 33 operations (17 required + 2 email verification + Google sign-in + profile edit + 4 package management + 3 gallery management + 5 private photos)', () => {
+  it('documents all 35 operations (17 required + Google sign-in + profile edit + 4 package management + 3 gallery management + 5 private photos + 4 event requests)', () => {
     const operations = Object.entries(openApiDocument.paths).flatMap(([path, methods]) =>
       Object.keys(methods).map((method) => `${method.toUpperCase()} ${path}`),
     );
@@ -54,8 +62,6 @@ describe('Swagger / OpenAPI', () => {
         'POST /api/auth/google',
         'GET /api/auth/me',
         'PATCH /api/auth/me',
-        'POST /api/auth/verify-email',
-        'POST /api/auth/resend-code',
         'GET /api/packages',
         'POST /api/packages',
         'PUT /api/packages/{id}',
@@ -81,6 +87,10 @@ describe('Swagger / OpenAPI', () => {
         'PUT /api/events/{id}/photos/{photoId}/consent',
         'POST /api/events/{id}/photos/{photoId}/publish',
         'GET /api/admin/event-photos',
+        'POST /api/events/requests',
+        'PATCH /api/events/{id}/request',
+        'POST /api/events/{id}/approve',
+        'POST /api/events/{id}/reject',
         'GET /api/health',
       ].sort(),
     );

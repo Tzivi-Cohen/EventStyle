@@ -5,7 +5,7 @@ import * as gallery from '../controllers/gallery.controller';
 import * as packages from '../controllers/packages.controller';
 import * as photos from '../controllers/photos.controller';
 import * as system from '../controllers/system.controller';
-import { authenticate, requireAdmin } from '../middleware/auth';
+import { authenticate, requireAdmin, requireRole } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimit';
 import { uploadManyImages, uploadSingleImage } from '../middleware/upload';
 
@@ -17,8 +17,6 @@ const authRouter = Router();
 authRouter.post('/register', authRateLimiter, auth.register);
 authRouter.post('/login', authRateLimiter, auth.login);
 authRouter.post('/google', authRateLimiter, auth.googleLogin);
-authRouter.post('/verify-email', authRateLimiter, auth.verifyEmail);
-authRouter.post('/resend-code', authRateLimiter, auth.resendCode);
 authRouter.get('/me', authenticate, auth.me);
 authRouter.patch('/me', authenticate, auth.updateMe);
 
@@ -38,6 +36,12 @@ eventsRouter.post('/', requireAdmin, events.createEvent);
 eventsRouter.put('/:id', requireAdmin, events.updateEvent);
 eventsRouter.patch('/:id/status', requireAdmin, events.updateEventStatus);
 eventsRouter.delete('/:id', requireAdmin, events.deleteEvent);
+
+// בקשות לקוחות: יצירה ועריכה (Pending בלבד, בעלת הבקשה – נבדק ב-Service), אישור ודחייה בידי המנהלת
+eventsRouter.post('/requests', requireRole('Client'), events.createRequest);
+eventsRouter.patch('/:id/request', requireRole('Client'), events.updateRequest);
+eventsRouter.post('/:id/approve', requireAdmin, events.approveRequest);
+eventsRouter.post('/:id/reject', requireAdmin, events.rejectRequest);
 
 // תמונות אירוע (פרטיות): מנהלת או בעלת האירוע – נבדק ב-Service. אירוע בלי בעלים – מנהלת בלבד
 eventsRouter.get('/:id/photos', photos.listEventPhotos);

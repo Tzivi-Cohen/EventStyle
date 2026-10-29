@@ -150,6 +150,12 @@ export function toEventDto(event: EventWithRelations, includeNotes: boolean, pho
     status: event.status,
     coverImageUrl: event.coverImageUrl,
     ...(includeNotes && { notes: event.notes }),
+    // פרטי הבקשה – גלויים גם ללקוחה
+    description: event.description,
+    clientNotes: event.clientNotes,
+    rejectionReason: event.rejectionReason,
+    reviewedAt: event.reviewedAt?.toISOString() ?? null,
+    ...(includeNotes && { reviewedById: event.reviewedById }),
     userId: event.userId,
     ...(event._count && { photoCount: event._count.photos }),
     ...(photos && { photos }),

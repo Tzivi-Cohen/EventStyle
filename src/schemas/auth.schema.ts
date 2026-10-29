@@ -52,16 +52,6 @@ export const loginSchema = z.strictObject({
   password: z.string().min(1, 'Password is required').max(72),
 });
 
-export const verifyEmailSchema = z.strictObject({
-  email: emailSchema,
-  code: z.string().trim().regex(/^\d{6}$/, 'Code must be exactly 6 digits'),
-});
-
-export const resendCodeSchema = z.strictObject({
-  email: emailSchema,
-});
-
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
-export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;

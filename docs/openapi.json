@@ -33,6 +33,10 @@
       "description": "אירועים (פרטיים – דורש התחברות)"
     },
     {
+      "name": "Event Requests",
+      "description": "בקשות לקוחות לעיצוב אירוע: שליחה ועריכה (Pending בלבד), אישור ודחייה בידי המנהלת"
+    },
+    {
       "name": "Event Photos",
       "description": "תמונות אירוע פרטיות: מנהלת או בעלת האירוע. תמונות חדשות נשמרות כקבצים פרטיים (authenticated) ונצפות רק דרך קישור חתום וזמני (10 דקות) שנוצר אחרי בדיקת ההרשאות. הסכמה לפרסום ופרסום בגלריה."
     },
@@ -72,8 +76,6 @@
                   "NOT_FOUND",
                   "CONFLICT",
                   "INVALID_CREDENTIALS",
-                  "INVALID_CODE",
-                  "CODE_EXPIRED",
                   "TOO_MANY_REQUESTS",
                   "FILE_TOO_LARGE",
                   "UNSUPPORTED_FILE_TYPE",
@@ -126,9 +128,22 @@
           "Planning",
           "Preparing",
           "Ready",
+          "Completed",
+          "Pending",
+          "Rejected"
+        ],
+        "description": "New=חדש, Planning=בתכנון, Preparing=בהכנות, Ready=מוכן, Completed=הושלם (תפעוליים – המנהלת מנהלת אותם). Pending=בקשת לקוחה שממתינה לאישור, Rejected=בקשה שנדחתה (נקבעים רק דרך /events/requests, /approve ו-/reject)"
+      },
+      "OperationalEventStatus": {
+        "type": "string",
+        "enum": [
+          "New",
+          "Planning",
+          "Preparing",
+          "Ready",
           "Completed"
         ],
-        "description": "New=חדש, Planning=בתכנון, Preparing=בהכנות, Ready=מוכן, Completed=הושלם"
+        "description": "סטטוס שהמנהלת יכולה לקבוע ישירות. Pending / Rejected אינם מותרים כאן"
       },
       "User": {
         "type": "object",
@@ -266,28 +281,6 @@
           "password": "Secret123"
         }
       },
-      "VerifyEmailRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "code"
-        ],
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email"
-          },
-          "code": {
-            "type": "string",
-            "pattern": "^\\d{6}$",
-            "description": "6-digit code from the email"
-          }
-        },
-        "example": {
-          "email": "noa.levi@example.com",
-          "code": "482913"
-        }
-      },
       "GoogleLoginRequest": {
         "type": "object",
         "required": [
@@ -365,21 +358,6 @@
           "limit": 10,
           "totalItems": 23,
           "totalPages": 3
-        }
-      },
-      "ResendCodeRequest": {
-        "type": "object",
-        "required": [
-          "email"
-        ],
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email"
-          }
-        },
-        "example": {
-          "email": "noa.levi@example.com"
         }
       },
       "Package": {
@@ -1071,6 +1049,32 @@
             "nullable": true,
             "description": "Admin only – internal notes"
           },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "description": "Design concept – written in the client request, visible to the client"
+          },
+          "clientNotes": {
+            "type": "string",
+            "nullable": true,
+            "description": "Special notes from the client request"
+          },
+          "rejectionReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Reason given when the request was rejected (visible to the client)"
+          },
+          "reviewedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the request was approved / rejected. null for admin-created events and pending requests"
+          },
+          "reviewedById": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Admin only – who approved / rejected the request"
+          },
           "userId": {
             "type": "integer",
             "nullable": true,
@@ -1164,7 +1168,7 @@
           "status": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/EventStatus"
+                "$ref": "#/components/schemas/OperationalEventStatus"
               }
             ],
             "description": "Optional. Create default: New. Update default: unchanged"
@@ -1178,6 +1182,18 @@
             "type": "string",
             "nullable": true,
             "maxLength": 2000
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "Omit to keep the current value; null / empty clears it"
+          },
+          "clientNotes": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 1000,
+            "description": "Omit to keep the current value; null / empty clears it"
           }
         },
         "example": {
@@ -1196,6 +1212,158 @@
           "notes": "להזמין בלונים בגוון ורוד עתיק"
         }
       },
+      "EventRequestInput": {
+        "type": "object",
+        "description": "בקשת לקוחה – Allowlist מפורשת. כל שדה אחר (status, userId, clientEmail, clientName, notes, coverImageUrl…) נדחה ב-400. הבעלים, השם והאימייל נקבעים בשרת לפי המשתמשת המחוברת.",
+        "additionalProperties": false,
+        "required": [
+          "eventName",
+          "eventType",
+          "eventDate",
+          "location",
+          "packageId",
+          "themeColor",
+          "guestCount",
+          "budget",
+          "description"
+        ],
+        "properties": {
+          "eventName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "eventType": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "eventDate": {
+            "type": "string",
+            "format": "date",
+            "description": "YYYY-MM-DD, today or later (Israel time)"
+          },
+          "location": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "packageId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Active package of the same event type, or a general one"
+          },
+          "themeColor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "guestCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000
+          },
+          "budget": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Estimated budget, up to 2 decimal places"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000,
+            "description": "Design concept"
+          },
+          "clientNotes": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 1000,
+            "description": "Special notes"
+          }
+        },
+        "example": {
+          "eventName": "בת מצווה לשירה",
+          "eventType": "BatMitzvah",
+          "eventDate": "2027-03-18",
+          "location": "גן אירועים השקמה, רעננה",
+          "packageId": 2,
+          "themeColor": "לבנדר",
+          "guestCount": 120,
+          "budget": 9000,
+          "description": "קונספט פרובאנס: לבנדר, עץ טבעי ונרות, פינת צילום עם קשת פרחים",
+          "clientNotes": "הכניסה לאולם מתאפשרת רק משעה 16:00"
+        }
+      },
+      "EventRequestUpdate": {
+        "type": "object",
+        "description": "עריכת בקשה ממתינה: אותם שדות כמו EventRequestInput, כולם אופציונליים – לפחות שדה אחד.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "eventName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "eventType": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "eventDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "location": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "packageId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "themeColor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "guestCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000
+          },
+          "budget": {
+            "type": "number",
+            "minimum": 0
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "clientNotes": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 1000
+          }
+        },
+        "example": {
+          "guestCount": 140,
+          "clientNotes": null
+        }
+      },
+      "RejectInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 500,
+            "description": "Optional, visible to the client"
+          }
+        },
+        "example": {
+          "reason": "התאריך כבר תפוס. נשמח להציע תאריך חלופי"
+        }
+      },
       "StatusInput": {
         "type": "object",
         "required": [
@@ -1204,7 +1372,7 @@
         "additionalProperties": false,
         "properties": {
           "status": {
-            "$ref": "#/components/schemas/EventStatus"
+            "$ref": "#/components/schemas/OperationalEventStatus"
           }
         },
         "example": {
@@ -1252,7 +1420,7 @@
           "Auth"
         ],
         "summary": "הרשמת לקוח (Guest)",
-        "description": "יוצר משתמש בתפקיד **Client** בלבד ויוצר קוד אימות בן 6 ספרות (תקף 10 דקות). אין שירות מיילים חיצוני: הקוד מודפס ביומן השרת (EMAIL_PROVIDER=console), ולכן verificationEmailSent תמיד true. מחזיר token, כך שאפשר להיכנס מיד, אבל אירועים קיימים מקושרים רק לאחר אימות האימייל. אם קיים חשבון **לא מאומת** עם אותו אימייל (Client, בלי Google) – הוא מוחלף בחשבון חדש עם id חדש ונשלח קוד חדש; כל token שהונפק לחשבון הישן נדחה (401). מגבלות שליחת הקודים נשמרות. חשבון מאומת או חשבון Admin לא מוחלפים (409).",
+        "description": "יוצר משתמש בתפקיד **Client** בלבד ומחזיר token – אפשר להיכנס מיד, בלי קוד אימות. emailVerified=false: הבעלות על הכתובת לא הוכחה, ולכן אירועים שהמנהלת פתחה לפי כתובת האימייל לא מקושרים אוטומטית (הם מקושרים כשבעלת הכתובת מתחברת עם Google מ-Gmail / Workspace). כתובת שכבר רשומה – תמיד 409; חשבון קיים לעולם לא מוחלף.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1278,17 +1446,13 @@
                       "properties": {
                         "message": {
                           "type": "string"
-                        },
-                        "verificationEmailSent": {
-                          "type": "boolean"
                         }
                       }
                     }
                   ]
                 },
                 "example": {
-                  "message": "Registration successful. A 6-digit verification code was sent to noa.levi@example.com",
-                  "verificationEmailSent": true,
+                  "message": "Registration successful",
                   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQ2xpZW50Iiwic3ViIjoiMiJ9.signature",
                   "user": {
                     "id": 2,
@@ -1328,7 +1492,7 @@
             }
           },
           "409": {
-            "description": "Email already registered and verified, belongs to an Admin or Google account, or the account changed during the request",
+            "description": "The email is already registered (any account)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1466,7 +1630,7 @@
           "Auth"
         ],
         "summary": "התחברות / הרשמה עם Google (Guest)",
-        "description": "שולחים את ה-ID Token שהתקבל מ-Google Identity Services. השרת מאמת חתימה, issuer, audience (GOOGLE_CLIENT_ID) ותוקף, ומזהה את החשבון לפי המזהה היציב של Google (sub).\n\n- **משתמש קיים עם אותו חשבון Google** – התחברות.\n- **משתמש קיים עם אותו אימייל** – רק אם Google היא ספקית האימייל (Gmail / Google Workspace), החשבון אינו Admin ואינו מקושר לחשבון Google אחר:\n  - חשבון **מאומת** – מקושר ל-Google (אותו id, הסיסמה ממשיכה לעבוד).\n  - חשבון **לא מאומת** – בעל הכתובת המוכח גובר: החשבון הישן נמחק ונוצר חשבון Google חדש ומאומת (id חדש, בלי הסיסמה והטלפון של הישן, isNewUser=true). כל token של החשבון הישן נדחה (401).\n  אחרת 409 בלי שינוי בחשבון.\n- **משתמש חדש** – נוצר בתפקיד **Client** בלבד, בלי סיסמה. אם Google היא ספקית האימייל הוא מאומת מיד ואירועים קיימים מקושרים אליו; אחרת emailVerified=false ויש לאמת בקוד (resend-code + verify-email).\n\nמוחזר אותו JWT של המערכת כמו בהתחברות רגילה. ה-Token של Google לא נשמר.",
+        "description": "שולחים את ה-ID Token שהתקבל מ-Google Identity Services. השרת מאמת חתימה, issuer, audience (GOOGLE_CLIENT_ID) ותוקף, ומזהה את החשבון לפי המזהה היציב של Google (sub).\n\n- **משתמש קיים עם אותו חשבון Google** – התחברות.\n- **משתמש קיים עם אותו אימייל** – רק אם Google היא ספקית האימייל (Gmail / Google Workspace), החשבון אינו Admin ואינו מקושר לחשבון Google אחר:\n  - חשבון **מאומת** – מקושר ל-Google (אותו id, הסיסמה ממשיכה לעבוד).\n  - חשבון **לא מאומת** בלי אירועים ובקשות – בעל הכתובת המוכח גובר: החשבון הישן נמחק ונוצר חשבון Google חדש ומאומת (id חדש, בלי הסיסמה והטלפון של הישן, isNewUser=true). כל token של החשבון הישן נדחה (401).\n  - חשבון **לא מאומת** עם אירועים או בקשות – 409 (התחברות עם סיסמה). Google לא מקושר לחשבון שהסיסמה שלו אולי של מישהו אחר.\n  אחרת 409 בלי שינוי בחשבון.\n- **משתמש חדש** – נוצר בתפקיד **Client** בלבד, בלי סיסמה. אם Google היא ספקית האימייל הוא מאומת מיד ואירועים קיימים מקושרים אליו; אחרת emailVerified=false (עובד כרגיל, בלי קישור אוטומטי של אירועים).\n\nמוחזר אותו JWT של המערכת כמו בהתחברות רגילה. ה-Token של Google לא נשמר.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1612,199 +1776,6 @@
                   "error": {
                     "code": "GOOGLE_AUTH_NOT_CONFIGURED",
                     "message": "Google sign-in is not configured on the server"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/auth/verify-email": {
-      "post": {
-        "tags": [
-          "Auth"
-        ],
-        "summary": "אימות כתובת האימייל בקוד (Guest / Client)",
-        "description": "קוד בן 6 ספרות, תקף 10 דקות, לשימוש חד-פעמי. אחרי 5 ניסיונות שגויים הקוד נפסל. בהצלחה: המשתמש מסומן כמאומת, אירועים קיימים עם אותו אימייל מקושרים אליו, ומוחזר token חדש.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerifyEmailRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Verified",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    {
-                      "$ref": "#/components/schemas/AuthResult"
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "message": {
-                          "type": "string"
-                        },
-                        "linkedEventsCount": {
-                          "type": "integer"
-                        }
-                      }
-                    }
-                  ]
-                },
-                "example": {
-                  "message": "Email verified successfully",
-                  "linkedEventsCount": 2,
-                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQ2xpZW50Iiwic3ViIjoiMiJ9.signature",
-                  "user": {
-                    "id": 2,
-                    "fullName": "נועה לוי",
-                    "email": "noa.levi@example.com",
-                    "phone": "050-1234567",
-                    "address": null,
-                    "role": "Client",
-                    "emailVerified": true,
-                    "googleLinked": false,
-                    "createdAt": "2026-10-01T09:00:00.000Z"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error / wrong code (INVALID_CODE) / expired code (CODE_EXPIRED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "code": "INVALID_CODE",
-                    "message": "Invalid verification code",
-                    "details": {
-                      "attemptsLeft": 3
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Already verified",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "code": "CONFLICT",
-                    "message": "Email is already verified"
-                  }
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too many requests – יותר מדי בקשות",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "code": "TOO_MANY_REQUESTS",
-                    "message": "Too many requests, please try again later"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/auth/resend-code": {
-      "post": {
-        "tags": [
-          "Auth"
-        ],
-        "summary": "שליחה חוזרת של קוד אימות (Guest / Client)",
-        "description": "מגבלות: פעם ב-60 שניות, ועד 5 קודים ב-60 דקות. קוד חדש מבטל את הקודם. התשובה זהה גם אם האימייל לא רשום או כבר מאומת (כדי לא לחשוף מידע). הקוד מודפס ביומן השרת (EMAIL_PROVIDER=console) – אין שליחת מייל חיצונית.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResendCodeRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Generic success message",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "message": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "example": {
-                  "message": "If an unverified account exists for this email, a new verification code has been sent"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error – שגיאת קלט",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "message": "Validation failed",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "Invalid email address"
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Cooldown or hourly limit reached",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "code": "TOO_MANY_REQUESTS",
-                    "message": "Please wait 42 seconds before requesting a new code",
-                    "details": {
-                      "retryAfterSeconds": 42
-                    }
                   }
                 }
               }
@@ -3408,7 +3379,8 @@
             "in": "query",
             "schema": {
               "$ref": "#/components/schemas/EventStatus"
-            }
+            },
+            "description": "Including Pending / Rejected requests"
           },
           {
             "name": "packageId",
@@ -3419,6 +3391,24 @@
             }
           },
           {
+            "name": "minBudget",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0
+            },
+            "description": "budget >= minBudget"
+          },
+          {
+            "name": "maxBudget",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0
+            },
+            "description": "budget <= maxBudget (minBudget cannot be greater)"
+          },
+          {
             "name": "sortBy",
             "in": "query",
             "schema": {
@@ -3426,7 +3416,9 @@
               "enum": [
                 "eventDate",
                 "budget",
-                "clientName"
+                "clientName",
+                "eventName",
+                "createdAt"
               ],
               "default": "eventDate"
             }
@@ -3511,6 +3503,11 @@
                       "status": "Planning",
                       "coverImageUrl": null,
                       "notes": "להזמין בלונים בגוון ורוד עתיק",
+                      "description": "שולחן מתוקים בגווני ורוד עתיק וזהב, פרחים טבעיים וקשת בלונים בכניסה",
+                      "clientNotes": "אלרגיה לחמניות – בלי פרחי חמנייה",
+                      "rejectionReason": null,
+                      "reviewedAt": "2026-10-02T09:00:00.000Z",
+                      "reviewedById": 1,
                       "userId": 2,
                       "createdAt": "2026-10-01T09:00:00.000Z",
                       "updatedAt": "2026-10-10T09:00:00.000Z",
@@ -3588,7 +3585,7 @@
           "Events"
         ],
         "summary": "יצירת אירוע (Admin)",
-        "description": "אם קיים לקוח **מאומת** עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שהלקוח יירשם ויאמת.\n\n**חבילה:** חייבת להיות פעילה, ומסוג האירוע או כללית (eventType=null). אחרת 400 על השדה packageId.",
+        "description": "אם קיים לקוח **מאומת** (התחבר עם Google מ-Gmail / Workspace, או אומת בעבר) עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שבעלת הכתובת תתחבר עם Google.\n\n**חבילה:** חייבת להיות פעילה, ומסוג האירוע או כללית (eventType=null). אחרת 400 על השדה packageId.",
         "security": [
           {
             "bearerAuth": []
@@ -3631,6 +3628,11 @@
                   "status": "New",
                   "coverImageUrl": null,
                   "notes": "להזמין בלונים בגוון ורוד עתיק",
+                  "description": "שולחן מתוקים בגווני ורוד עתיק וזהב, פרחים טבעיים וקשת בלונים בכניסה",
+                  "clientNotes": "אלרגיה לחמניות – בלי פרחי חמנייה",
+                  "rejectionReason": null,
+                  "reviewedAt": "2026-10-02T09:00:00.000Z",
+                  "reviewedById": 1,
                   "userId": 2,
                   "photos": [],
                   "createdAt": "2026-10-01T09:00:00.000Z",
@@ -3701,14 +3703,91 @@
         "tags": [
           "Events"
         ],
-        "summary": "האירועים של המשתמש המחובר (Client / Admin)",
-        "description": "לפי userId מתוך ה-Token בלבד. ללקוח לא מוחזר השדה notes. ממוין מהתאריך המאוחר למוקדם.",
+        "summary": "האירועים והבקשות של המשתמש המחובר, עם חיפוש, סינון ומיון (Client / Admin)",
+        "description": "לפי userId מתוך ה-Token בלבד – הסינון לא יכול להרחיב את הרשימה מעבר לאירועים של המשתמש. כולל בקשות בסטטוס Pending ו-Rejected. ללקוח לא מוחזר השדה notes. ברירת מחדל: eventDate בסדר יורד.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
         "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "Search in eventName (case-insensitive)"
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/EventType"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/EventStatus"
+            },
+            "description": "Including Pending / Rejected requests"
+          },
+          {
+            "name": "packageId",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "minBudget",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0
+            },
+            "description": "budget >= minBudget"
+          },
+          {
+            "name": "maxBudget",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0
+            },
+            "description": "budget <= maxBudget (minBudget cannot be greater)"
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "eventDate",
+                "budget",
+                "clientName",
+                "eventName",
+                "createdAt"
+              ],
+              "default": "eventDate"
+            }
+          },
+          {
+            "name": "sortDir",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          },
           {
             "name": "page",
             "in": "query",
@@ -3776,6 +3855,11 @@
                       "budget": 4500,
                       "status": "Planning",
                       "coverImageUrl": null,
+                      "description": "שולחן מתוקים בגווני ורוד עתיק וזהב, פרחים טבעיים וקשת בלונים בכניסה",
+                      "clientNotes": "אלרגיה לחמניות – בלי פרחי חמנייה",
+                      "rejectionReason": null,
+                      "reviewedAt": "2026-10-02T09:00:00.000Z",
+                      "reviewedById": 1,
                       "userId": 2,
                       "createdAt": "2026-10-01T09:00:00.000Z",
                       "updatedAt": "2026-10-10T09:00:00.000Z",
@@ -3883,6 +3967,10 @@
                   "budget": 4500,
                   "status": "Planning",
                   "coverImageUrl": null,
+                  "description": "שולחן מתוקים בגווני ורוד עתיק וזהב, פרחים טבעיים וקשת בלונים בכניסה",
+                  "clientNotes": "אלרגיה לחמניות – בלי פרחי חמנייה",
+                  "rejectionReason": null,
+                  "reviewedAt": "2026-10-02T09:00:00.000Z",
                   "userId": 2,
                   "photos": [
                     {
@@ -4037,6 +4125,11 @@
                   "status": "Planning",
                   "coverImageUrl": null,
                   "notes": "להזמין בלונים בגוון ורוד עתיק",
+                  "description": "שולחן מתוקים בגווני ורוד עתיק וזהב, פרחים טבעיים וקשת בלונים בכניסה",
+                  "clientNotes": "אלרגיה לחמניות – בלי פרחי חמנייה",
+                  "rejectionReason": null,
+                  "reviewedAt": "2026-10-02T09:00:00.000Z",
+                  "reviewedById": 1,
                   "userId": 2,
                   "photos": [
                     {
@@ -4127,6 +4220,22 @@
                   "error": {
                     "code": "NOT_FOUND",
                     "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The event is a Pending / Rejected request – approve or reject it first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "A request must be approved or rejected before it can be edited"
                   }
                 }
               }
@@ -4283,6 +4392,7 @@
           "Events"
         ],
         "summary": "עדכון סטטוס ההכנות (Admin)",
+        "description": "מעבר חופשי בין הסטטוסים התפעוליים (New, Planning, Preparing, Ready, Completed) – לתיקון טעויות. בקשה (Pending / Rejected) לא משתנה כאן: משתמשים ב-/approve או ב-/reject.",
         "security": [
           {
             "bearerAuth": []
@@ -4338,6 +4448,11 @@
                   "status": "Preparing",
                   "coverImageUrl": null,
                   "notes": "להזמין בלונים בגוון ורוד עתיק",
+                  "description": "שולחן מתוקים בגווני ורוד עתיק וזהב, פרחים טבעיים וקשת בלונים בכניסה",
+                  "clientNotes": "אלרגיה לחמניות – בלי פרחי חמנייה",
+                  "rejectionReason": null,
+                  "reviewedAt": "2026-10-02T09:00:00.000Z",
+                  "reviewedById": 1,
                   "userId": 2,
                   "photos": [
                     {
@@ -4428,6 +4543,633 @@
                   "error": {
                     "code": "NOT_FOUND",
                     "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The event is a Pending / Rejected request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "A request must be approved or rejected before its status can be managed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/requests": {
+      "post": {
+        "tags": [
+          "Event Requests"
+        ],
+        "summary": "שליחת בקשה לעיצוב אירוע (Client)",
+        "description": "הבקשה נוצרת בסטטוס **Pending** ומשויכת למשתמשת מה-Token. clientName ו-clientEmail נלקחים מהחשבון.\n\n**מגבלות:** עד 5 בקשות ממתינות ללקוחה. בקשה כפולה – אותו שם אירוע (בלי הבדל אותיות) ואותו תאריך, בבקשה ממתינה או באירוע שכבר אושר – נדחית ב-409. בקשה שנדחתה לא חוסמת שליחה מחדש. הבדיקות מתבצעות בנעילה, כך שהן נכונות גם בבקשות מקבילות.\n\n**חבילה:** פעילה, ומסוג האירוע או כללית – אחרת 400 על packageId.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventRequestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Request created (Pending)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 7,
+                  "eventName": "בת מצווה לשירה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "BatMitzvah",
+                  "eventDate": "2027-03-18",
+                  "location": "גן אירועים השקמה, רעננה",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "לבנדר",
+                  "guestCount": 120,
+                  "budget": 9000,
+                  "status": "Pending",
+                  "coverImageUrl": null,
+                  "description": "קונספט פרובאנס: לבנדר, עץ טבעי ונרות, פינת צילום עם קשת פרחים",
+                  "clientNotes": "הכניסה לאולם מתאפשרת רק משעה 16:00",
+                  "rejectionReason": null,
+                  "reviewedAt": null,
+                  "userId": 2,
+                  "photos": [],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate request, or 5 pending requests already (details: { limit, current })",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "You already have a request or an event with this name on this date"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/request": {
+      "patch": {
+        "tags": [
+          "Event Requests"
+        ],
+        "summary": "עריכת בקשה ממתינה (בעלת הבקשה בלבד)",
+        "description": "רק שדות ה-Allowlist (EventRequestUpdate). רק בסטטוס **Pending**: השורה ננעלת לפני הבדיקה, ולכן עריכה במקביל לאישור או לדחייה לא יכולה לעקוף אותם – היא מסתיימת לפני ההחלטה, או נדחית ב-409.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Request (event) id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventRequestUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 7,
+                  "eventName": "בת מצווה לשירה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "BatMitzvah",
+                  "eventDate": "2027-03-18",
+                  "location": "גן אירועים השקמה, רעננה",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "לבנדר",
+                  "guestCount": 140,
+                  "budget": 9000,
+                  "status": "Pending",
+                  "coverImageUrl": null,
+                  "description": "קונספט פרובאנס: לבנדר, עץ טבעי ונרות, פינת צילום עם קשת פרחים",
+                  "clientNotes": "הכניסה לאולם מתאפשרת רק משעה 16:00",
+                  "rejectionReason": null,
+                  "reviewedAt": null,
+                  "userId": 2,
+                  "photos": [],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Event belongs to another client, or has no owner (clients only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have access to this event"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is no longer Pending (approved / rejected), or the change makes it a duplicate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "Only a pending request can be edited"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/approve": {
+      "post": {
+        "tags": [
+          "Event Requests"
+        ],
+        "summary": "אישור בקשה (Admin): Pending → New",
+        "description": "עדכון אטומי בתנאי status = Pending. אותה רשומה הופכת לאירוע – לא נוצרת רשומה חדשה. אישור כפול, או אישור ודחייה במקביל: הראשון מצליח, השני מקבל 409.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Request (event) id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved – now an event in status New",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 7,
+                  "eventName": "בת מצווה לשירה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "BatMitzvah",
+                  "eventDate": "2027-03-18",
+                  "location": "גן אירועים השקמה, רעננה",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "לבנדר",
+                  "guestCount": 120,
+                  "budget": 9000,
+                  "status": "New",
+                  "coverImageUrl": null,
+                  "description": "קונספט פרובאנס: לבנדר, עץ טבעי ונרות, פינת צילום עם קשת פרחים",
+                  "clientNotes": "הכניסה לאולם מתאפשרת רק משעה 16:00",
+                  "rejectionReason": null,
+                  "reviewedAt": "2026-10-28T10:00:00.000Z",
+                  "userId": 2,
+                  "photos": [],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z",
+                  "reviewedById": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was already approved or rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "This request was already reviewed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/{id}/reject": {
+      "post": {
+        "tags": [
+          "Event Requests"
+        ],
+        "summary": "דחיית בקשה (Admin): Pending → Rejected",
+        "description": "הבקשה נשמרת במסד (לא נמחקת) ונעולה לעריכה. reason – רשות, גלוי ללקוחה. אותה הגנה מפני החלטה כפולה כמו באישור.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Request (event) id",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": 7,
+                  "eventName": "בת מצווה לשירה",
+                  "clientName": "נועה לוי",
+                  "clientEmail": "noa.levi@example.com",
+                  "eventType": "BatMitzvah",
+                  "eventDate": "2027-03-18",
+                  "location": "גן אירועים השקמה, רעננה",
+                  "packageId": 2,
+                  "package": {
+                    "id": 2,
+                    "name": "Premium"
+                  },
+                  "themeColor": "לבנדר",
+                  "guestCount": 120,
+                  "budget": 9000,
+                  "status": "Rejected",
+                  "coverImageUrl": null,
+                  "description": "קונספט פרובאנס: לבנדר, עץ טבעי ונרות, פינת צילום עם קשת פרחים",
+                  "clientNotes": "הכניסה לאולם מתאפשרת רק משעה 16:00",
+                  "rejectionReason": "התאריך כבר תפוס",
+                  "reviewedAt": "2026-10-28T10:00:00.000Z",
+                  "userId": 2,
+                  "photos": [],
+                  "createdAt": "2026-10-01T09:00:00.000Z",
+                  "updatedAt": "2026-10-10T09:00:00.000Z",
+                  "reviewedById": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error – שגיאת קלט",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Validation failed",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "Invalid email address"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing / invalid / expired token – לא מחובר",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing Bearer token"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Logged in but not allowed – אין הרשאה",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found – לא נמצא",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Event not found"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was already approved or rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "CONFLICT",
+                    "message": "This request was already reviewed"
                   }
                 }
               }

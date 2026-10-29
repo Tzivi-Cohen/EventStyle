@@ -1,7 +1,6 @@
-import { DEFAULT_PAGE_SIZE, EVENT_STATUSES, EVENT_TYPES, MAX_PAGE_SIZE } from '../schemas/common.schema';
-import { SORT_FIELDS } from '../schemas/event.schema';
+import { DEFAULT_PAGE_SIZE, EVENT_STATUSES, EVENT_TYPES, MAX_PAGE_SIZE, OPERATIONAL_EVENT_STATUSES } from '../schemas/common.schema';
+import { MAX_PENDING_REQUESTS, SORT_FIELDS } from '../schemas/event.schema';
 import { ALLOWED_MIME_TYPES, MAX_FILES_PER_REQUEST, MAX_FILE_SIZE_MB } from '../middleware/upload';
-import { VERIFICATION } from '../config/verification';
 import { ADDRESS_MAX_LENGTH } from '../schemas/auth.schema';
 import { MAX_FEATURES, MAX_SORT_ORDER } from '../schemas/package.schema';
 import { MAX_GALLERY_SORT_ORDER } from '../schemas/gallery.schema';
@@ -107,6 +106,18 @@ const examplePage = (item: unknown, totalItems = 1) => ({
   data: [item],
   pagination: { page: 1, limit: DEFAULT_PAGE_SIZE, totalItems, totalPages: Math.ceil(totalItems / DEFAULT_PAGE_SIZE) },
 });
+/** סינון ומיון של אירועים – משותפים ל-GET /events ול-GET /events/my */
+const eventFilterParams = [
+  { name: 'eventType', in: 'query', schema: ref('EventType') },
+  { name: 'status', in: 'query', schema: ref('EventStatus'), description: 'Including Pending / Rejected requests' },
+  { name: 'packageId', in: 'query', schema: { type: 'integer', minimum: 1 } },
+  { name: 'minBudget', in: 'query', schema: { type: 'number', minimum: 0 }, description: 'budget >= minBudget' },
+  { name: 'maxBudget', in: 'query', schema: { type: 'number', minimum: 0 }, description: 'budget <= maxBudget (minBudget cannot be greater)' },
+  { name: 'sortBy', in: 'query', schema: { type: 'string', enum: [...SORT_FIELDS], default: 'eventDate' } },
+  { name: 'sortDir', in: 'query', schema: { type: 'string', enum: ['asc', 'desc'], default: 'desc' } },
+];
+const conflict = (description: string, message: string) => errorResponse(description, 'CONFLICT', message);
+
 const idParam = (name = 'id', description = 'Event id') => ({
   name,
   in: 'path',
@@ -174,12 +185,40 @@ const exampleEventForAdmin = {
   status: 'Planning',
   coverImageUrl: null,
   notes: 'להזמין בלונים בגוון ורוד עתיק',
+  description: 'שולחן מתוקים בגווני ורוד עתיק וזהב, פרחים טבעיים וקשת בלונים בכניסה',
+  clientNotes: 'אלרגיה לחמניות – בלי פרחי חמנייה',
+  rejectionReason: null,
+  reviewedAt: '2026-10-02T09:00:00.000Z',
+  reviewedById: 1,
   userId: 2,
   photos: [exampleAdminPhoto],
   createdAt: '2026-10-01T09:00:00.000Z',
   updatedAt: '2026-10-10T09:00:00.000Z',
 };
-const exampleEventForClient = (({ notes: _omit, ...rest }) => ({ ...rest, photos: [examplePhoto] }))(exampleEventForAdmin);
+const exampleEventForClient = (({ notes: _omit, reviewedById: _r, ...rest }) => ({ ...rest, photos: [examplePhoto] }))(exampleEventForAdmin);
+const exampleRequestBody = {
+  eventName: 'בת מצווה לשירה',
+  eventType: 'BatMitzvah',
+  eventDate: '2027-03-18',
+  location: 'גן אירועים השקמה, רעננה',
+  packageId: 2,
+  themeColor: 'לבנדר',
+  guestCount: 120,
+  budget: 9000,
+  description: 'קונספט פרובאנס: לבנדר, עץ טבעי ונרות, פינת צילום עם קשת פרחים',
+  clientNotes: 'הכניסה לאולם מתאפשרת רק משעה 16:00',
+};
+const examplePendingRequest = {
+  ...exampleEventForClient,
+  ...exampleRequestBody,
+  id: 7,
+  package: { id: 2, name: 'Premium' },
+  clientName: 'נועה לוי',
+  clientEmail: 'noa.levi@example.com',
+  status: 'Pending',
+  reviewedAt: null,
+  photos: [],
+};
 const exampleListItem = (() => {
   const { photos: _p, ...rest } = exampleEventForAdmin;
   return { ...rest, photoCount: 1 };
@@ -273,6 +312,7 @@ export const openApiDocument = {
     { name: 'Admin', description: 'ממשק ניהול (מנהלת בלבד)' },
     { name: 'Gallery', description: 'גלריית עיצובים ציבורית' },
     { name: 'Events', description: 'אירועים (פרטיים – דורש התחברות)' },
+    { name: 'Event Requests', description: 'בקשות לקוחות לעיצוב אירוע: שליחה ועריכה (Pending בלבד), אישור ודחייה בידי המנהלת' },
     {
       name: 'Event Photos',
       description:
@@ -303,8 +343,6 @@ export const openApiDocument = {
                   'NOT_FOUND',
                   'CONFLICT',
                   'INVALID_CREDENTIALS',
-                  'INVALID_CODE',
-                  'CODE_EXPIRED',
                   'TOO_MANY_REQUESTS',
                   'FILE_TOO_LARGE',
                   'UNSUPPORTED_FILE_TYPE',
@@ -330,7 +368,18 @@ export const openApiDocument = {
       },
       Role: { type: 'string', enum: ['Admin', 'Client'] },
       EventType: { type: 'string', enum: [...EVENT_TYPES], description: 'Birthday=יום הולדת, BatMitzvah=בת מצווה, Brit=ברית/בריתה, Corporate=אירוע חברה, Private=אירוע פרטי' },
-      EventStatus: { type: 'string', enum: [...EVENT_STATUSES], description: 'New=חדש, Planning=בתכנון, Preparing=בהכנות, Ready=מוכן, Completed=הושלם' },
+      EventStatus: {
+        type: 'string',
+        enum: [...EVENT_STATUSES],
+        description:
+          'New=חדש, Planning=בתכנון, Preparing=בהכנות, Ready=מוכן, Completed=הושלם (תפעוליים – המנהלת מנהלת אותם). ' +
+          'Pending=בקשת לקוחה שממתינה לאישור, Rejected=בקשה שנדחתה (נקבעים רק דרך /events/requests, /approve ו-/reject)',
+      },
+      OperationalEventStatus: {
+        type: 'string',
+        enum: [...OPERATIONAL_EVENT_STATUSES],
+        description: 'סטטוס שהמנהלת יכולה לקבוע ישירות. Pending / Rejected אינם מותרים כאן',
+      },
       User: {
         type: 'object',
         required: ['id', 'fullName', 'email', 'phone', 'address', 'role', 'emailVerified', 'googleLinked', 'createdAt'],
@@ -374,15 +423,6 @@ export const openApiDocument = {
         properties: { email: { type: 'string', format: 'email' }, password: { type: 'string' } },
         example: { email: 'noa.levi@example.com', password: 'Secret123' },
       },
-      VerifyEmailRequest: {
-        type: 'object',
-        required: ['email', 'code'],
-        properties: {
-          email: { type: 'string', format: 'email' },
-          code: { type: 'string', pattern: '^\\d{6}$', description: '6-digit code from the email' },
-        },
-        example: { email: 'noa.levi@example.com', code: '482913' },
-      },
       GoogleLoginRequest: {
         type: 'object',
         required: ['idToken'],
@@ -419,12 +459,6 @@ export const openApiDocument = {
           totalPages: { type: 'integer', minimum: 0, description: '0 when there are no results' },
         },
         example: { page: 1, limit: DEFAULT_PAGE_SIZE, totalItems: 23, totalPages: 3 },
-      },
-      ResendCodeRequest: {
-        type: 'object',
-        required: ['email'],
-        properties: { email: { type: 'string', format: 'email' } },
-        example: { email: 'noa.levi@example.com' },
       },
       Package: {
         type: 'object',
@@ -655,6 +689,11 @@ export const openApiDocument = {
           status: ref('EventStatus'),
           coverImageUrl: { type: 'string', nullable: true },
           notes: { type: 'string', nullable: true, description: 'Admin only – internal notes' },
+          description: { type: 'string', nullable: true, description: 'Design concept – written in the client request, visible to the client' },
+          clientNotes: { type: 'string', nullable: true, description: 'Special notes from the client request' },
+          rejectionReason: { type: 'string', nullable: true, description: 'Reason given when the request was rejected (visible to the client)' },
+          reviewedAt: { type: 'string', format: 'date-time', nullable: true, description: 'When the request was approved / rejected. null for admin-created events and pending requests' },
+          reviewedById: { type: 'integer', nullable: true, description: 'Admin only – who approved / rejected the request' },
           userId: { type: 'integer', nullable: true, description: 'Linked verified client (set by server only)' },
           photoCount: { type: 'integer', description: 'In list responses' },
           photos: {
@@ -682,17 +721,65 @@ export const openApiDocument = {
           themeColor: { type: 'string', minLength: 1, maxLength: 30, description: 'e.g. "#F4C2C2" or "ורוד עתיק"' },
           guestCount: { type: 'integer', minimum: 1, maximum: 100000 },
           budget: { type: 'number', minimum: 0, description: 'Up to 2 decimal places' },
-          status: { allOf: [ref('EventStatus')], description: 'Optional. Create default: New. Update default: unchanged' },
+          status: { allOf: [ref('OperationalEventStatus')], description: 'Optional. Create default: New. Update default: unchanged' },
           coverImageUrl: { type: 'string', nullable: true, description: 'http(s) URL, or null / empty' },
           notes: { type: 'string', nullable: true, maxLength: 2000 },
+          description: { type: 'string', nullable: true, maxLength: 2000, description: 'Omit to keep the current value; null / empty clears it' },
+          clientNotes: { type: 'string', nullable: true, maxLength: 1000, description: 'Omit to keep the current value; null / empty clears it' },
         },
         example: exampleEventBody,
+      },
+      EventRequestInput: {
+        type: 'object',
+        description:
+          'בקשת לקוחה – Allowlist מפורשת. כל שדה אחר (status, userId, clientEmail, clientName, notes, coverImageUrl…) נדחה ב-400. ' +
+          'הבעלים, השם והאימייל נקבעים בשרת לפי המשתמשת המחוברת.',
+        additionalProperties: false,
+        required: ['eventName', 'eventType', 'eventDate', 'location', 'packageId', 'themeColor', 'guestCount', 'budget', 'description'],
+        properties: {
+          eventName: { type: 'string', minLength: 2, maxLength: 120 },
+          eventType: ref('EventType'),
+          eventDate: { type: 'string', format: 'date', description: 'YYYY-MM-DD, today or later (Israel time)' },
+          location: { type: 'string', minLength: 2, maxLength: 200 },
+          packageId: { type: 'integer', minimum: 1, description: 'Active package of the same event type, or a general one' },
+          themeColor: { type: 'string', minLength: 1, maxLength: 30 },
+          guestCount: { type: 'integer', minimum: 1, maximum: 100000 },
+          budget: { type: 'number', minimum: 0, description: 'Estimated budget, up to 2 decimal places' },
+          description: { type: 'string', minLength: 10, maxLength: 2000, description: 'Design concept' },
+          clientNotes: { type: 'string', nullable: true, maxLength: 1000, description: 'Special notes' },
+        },
+        example: exampleRequestBody,
+      },
+      EventRequestUpdate: {
+        type: 'object',
+        description: 'עריכת בקשה ממתינה: אותם שדות כמו EventRequestInput, כולם אופציונליים – לפחות שדה אחד.',
+        additionalProperties: false,
+        minProperties: 1,
+        properties: {
+          eventName: { type: 'string', minLength: 2, maxLength: 120 },
+          eventType: ref('EventType'),
+          eventDate: { type: 'string', format: 'date' },
+          location: { type: 'string', minLength: 2, maxLength: 200 },
+          packageId: { type: 'integer', minimum: 1 },
+          themeColor: { type: 'string', minLength: 1, maxLength: 30 },
+          guestCount: { type: 'integer', minimum: 1, maximum: 100000 },
+          budget: { type: 'number', minimum: 0 },
+          description: { type: 'string', minLength: 10, maxLength: 2000 },
+          clientNotes: { type: 'string', nullable: true, maxLength: 1000 },
+        },
+        example: { guestCount: 140, clientNotes: null },
+      },
+      RejectInput: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { reason: { type: 'string', nullable: true, maxLength: 500, description: 'Optional, visible to the client' } },
+        example: { reason: 'התאריך כבר תפוס. נשמח להציע תאריך חלופי' },
       },
       StatusInput: {
         type: 'object',
         required: ['status'],
         additionalProperties: false,
-        properties: { status: ref('EventStatus') },
+        properties: { status: ref('OperationalEventStatus') },
         example: { status: 'Preparing' },
       },
       Health: {
@@ -713,11 +800,9 @@ export const openApiDocument = {
         tags: ['Auth'],
         summary: 'הרשמת לקוח (Guest)',
         description:
-          `יוצר משתמש בתפקיד **Client** בלבד ויוצר קוד אימות בן 6 ספרות (תקף ${VERIFICATION.CODE_TTL_MINUTES} דקות). ` +
-          'אין שירות מיילים חיצוני: הקוד מודפס ביומן השרת (EMAIL_PROVIDER=console), ולכן verificationEmailSent תמיד true. ' +
-          'מחזיר token, כך שאפשר להיכנס מיד, אבל אירועים קיימים מקושרים רק לאחר אימות האימייל. ' +
-          'אם קיים חשבון **לא מאומת** עם אותו אימייל (Client, בלי Google) – הוא מוחלף בחשבון חדש עם id חדש ונשלח קוד חדש; ' +
-          'כל token שהונפק לחשבון הישן נדחה (401). מגבלות שליחת הקודים נשמרות. חשבון מאומת או חשבון Admin לא מוחלפים (409).',
+          'יוצר משתמש בתפקיד **Client** בלבד ומחזיר token – אפשר להיכנס מיד, בלי קוד אימות. ' +
+          'emailVerified=false: הבעלות על הכתובת לא הוכחה, ולכן אירועים שהמנהלת פתחה לפי כתובת האימייל לא מקושרים אוטומטית ' +
+          '(הם מקושרים כשבעלת הכתובת מתחברת עם Google מ-Gmail / Workspace). כתובת שכבר רשומה – תמיד 409; חשבון קיים לעולם לא מוחלף.',
         requestBody: { required: true, content: jsonContent(ref('RegisterRequest')) },
         responses: {
           201: {
@@ -728,13 +813,12 @@ export const openApiDocument = {
                   ref('AuthResult'),
                   {
                     type: 'object',
-                    properties: { message: { type: 'string' }, verificationEmailSent: { type: 'boolean' } },
+                    properties: { message: { type: 'string' } },
                   },
                 ],
               },
               {
-                message: 'Registration successful. A 6-digit verification code was sent to noa.levi@example.com',
-                verificationEmailSent: true,
+                message: 'Registration successful',
                 token: exampleToken,
                 user: { ...exampleUser, emailVerified: false },
               },
@@ -742,7 +826,7 @@ export const openApiDocument = {
           },
           400: R.validation,
           409: errorResponse(
-            'Email already registered and verified, belongs to an Admin or Google account, or the account changed during the request',
+            'The email is already registered (any account)',
             'CONFLICT',
             'An account with this email already exists',
           ),
@@ -774,11 +858,12 @@ export const openApiDocument = {
           '- **משתמש קיים עם אותו אימייל** – רק אם Google היא ספקית האימייל (Gmail / Google Workspace), ' +
           'החשבון אינו Admin ואינו מקושר לחשבון Google אחר:\n' +
           '  - חשבון **מאומת** – מקושר ל-Google (אותו id, הסיסמה ממשיכה לעבוד).\n' +
-          '  - חשבון **לא מאומת** – בעל הכתובת המוכח גובר: החשבון הישן נמחק ונוצר חשבון Google חדש ומאומת (id חדש, ' +
+          '  - חשבון **לא מאומת** בלי אירועים ובקשות – בעל הכתובת המוכח גובר: החשבון הישן נמחק ונוצר חשבון Google חדש ומאומת (id חדש, ' +
           'בלי הסיסמה והטלפון של הישן, isNewUser=true). כל token של החשבון הישן נדחה (401).\n' +
+          '  - חשבון **לא מאומת** עם אירועים או בקשות – 409 (התחברות עם סיסמה). Google לא מקושר לחשבון שהסיסמה שלו אולי של מישהו אחר.\n' +
           '  אחרת 409 בלי שינוי בחשבון.\n' +
           '- **משתמש חדש** – נוצר בתפקיד **Client** בלבד, בלי סיסמה. אם Google היא ספקית האימייל הוא מאומת מיד ' +
-          'ואירועים קיימים מקושרים אליו; אחרת emailVerified=false ויש לאמת בקוד (resend-code + verify-email).\n\n' +
+          'ואירועים קיימים מקושרים אליו; אחרת emailVerified=false (עובד כרגיל, בלי קישור אוטומטי של אירועים).\n\n' +
           'מוחזר אותו JWT של המערכת כמו בהתחברות רגילה. ה-Token של Google לא נשמר.',
         requestBody: { required: true, content: jsonContent(ref('GoogleLoginRequest')) },
         responses: {
@@ -811,64 +896,6 @@ export const openApiDocument = {
             'GOOGLE_AUTH_NOT_CONFIGURED',
             'Google sign-in is not configured on the server',
           ),
-        },
-      },
-    },
-    '/api/auth/verify-email': {
-      post: {
-        tags: ['Auth'],
-        summary: 'אימות כתובת האימייל בקוד (Guest / Client)',
-        description:
-          `קוד בן 6 ספרות, תקף ${VERIFICATION.CODE_TTL_MINUTES} דקות, לשימוש חד-פעמי. ` +
-          `אחרי ${VERIFICATION.MAX_WRONG_ATTEMPTS} ניסיונות שגויים הקוד נפסל. ` +
-          'בהצלחה: המשתמש מסומן כמאומת, אירועים קיימים עם אותו אימייל מקושרים אליו, ומוחזר token חדש.',
-        requestBody: { required: true, content: jsonContent(ref('VerifyEmailRequest')) },
-        responses: {
-          200: {
-            description: 'Verified',
-            content: jsonContent(
-              {
-                allOf: [
-                  ref('AuthResult'),
-                  { type: 'object', properties: { message: { type: 'string' }, linkedEventsCount: { type: 'integer' } } },
-                ],
-              },
-              { message: 'Email verified successfully', linkedEventsCount: 2, ...authResult },
-            ),
-          },
-          400: {
-            description: 'Validation error / wrong code (INVALID_CODE) / expired code (CODE_EXPIRED)',
-            content: jsonContent(ref('ErrorResponse'), {
-              error: { code: 'INVALID_CODE', message: 'Invalid verification code', details: { attemptsLeft: 3 } },
-            }),
-          },
-          409: errorResponse('Already verified', 'CONFLICT', 'Email is already verified'),
-          429: R.tooMany,
-        },
-      },
-    },
-    '/api/auth/resend-code': {
-      post: {
-        tags: ['Auth'],
-        summary: 'שליחה חוזרת של קוד אימות (Guest / Client)',
-        description:
-          `מגבלות: פעם ב-${VERIFICATION.RESEND_COOLDOWN_SECONDS} שניות, ועד ${VERIFICATION.MAX_SENDS_PER_WINDOW} קודים ` +
-          `ב-${VERIFICATION.SEND_WINDOW_MINUTES} דקות. קוד חדש מבטל את הקודם. ` +
-          'התשובה זהה גם אם האימייל לא רשום או כבר מאומת (כדי לא לחשוף מידע). ' +
-          'הקוד מודפס ביומן השרת (EMAIL_PROVIDER=console) – אין שליחת מייל חיצונית.',
-        requestBody: { required: true, content: jsonContent(ref('ResendCodeRequest')) },
-        responses: {
-          200: {
-            description: 'Generic success message',
-            content: jsonContent(
-              { type: 'object', properties: { message: { type: 'string' } } },
-              { message: 'If an unverified account exists for this email, a new verification code has been sent' },
-            ),
-          },
-          400: R.validation,
-          429: errorResponse('Cooldown or hourly limit reached', 'TOO_MANY_REQUESTS', 'Please wait 42 seconds before requesting a new code', {
-            retryAfterSeconds: 42,
-          }),
         },
       },
     },
@@ -1132,11 +1159,7 @@ export const openApiDocument = {
         security: bearer,
         parameters: [
           { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 }, description: 'Search in eventName or clientName (case-insensitive)' },
-          { name: 'eventType', in: 'query', schema: ref('EventType') },
-          { name: 'status', in: 'query', schema: ref('EventStatus') },
-          { name: 'packageId', in: 'query', schema: { type: 'integer', minimum: 1 } },
-          { name: 'sortBy', in: 'query', schema: { type: 'string', enum: [...SORT_FIELDS], default: 'eventDate' } },
-          { name: 'sortDir', in: 'query', schema: { type: 'string', enum: ['asc', 'desc'], default: 'desc' } },
+          ...eventFilterParams,
           ...pageParams,
         ],
         responses: {
@@ -1150,7 +1173,8 @@ export const openApiDocument = {
         tags: ['Events'],
         summary: 'יצירת אירוע (Admin)',
         description:
-          'אם קיים לקוח **מאומת** עם clientEmail – האירוע מקושר אליו. אחרת userId=null עד שהלקוח יירשם ויאמת.\n\n' +
+          'אם קיים לקוח **מאומת** (התחבר עם Google מ-Gmail / Workspace, או אומת בעבר) עם clientEmail – האירוע מקושר אליו. ' +
+          'אחרת userId=null עד שבעלת הכתובת תתחבר עם Google.\n\n' +
           '**חבילה:** חייבת להיות פעילה, ומסוג האירוע או כללית (eventType=null). אחרת 400 על השדה packageId.',
         security: bearer,
         requestBody: { required: true, content: jsonContent(ref('EventInput')) },
@@ -1165,10 +1189,16 @@ export const openApiDocument = {
     '/api/events/my': {
       get: {
         tags: ['Events'],
-        summary: 'האירועים של המשתמש המחובר (Client / Admin)',
-        description: 'לפי userId מתוך ה-Token בלבד. ללקוח לא מוחזר השדה notes. ממוין מהתאריך המאוחר למוקדם.',
+        summary: 'האירועים והבקשות של המשתמש המחובר, עם חיפוש, סינון ומיון (Client / Admin)',
+        description:
+          'לפי userId מתוך ה-Token בלבד – הסינון לא יכול להרחיב את הרשימה מעבר לאירועים של המשתמש. ' +
+          'כולל בקשות בסטטוס Pending ו-Rejected. ללקוח לא מוחזר השדה notes. ברירת מחדל: eventDate בסדר יורד.',
         security: bearer,
-        parameters: [...pageParams],
+        parameters: [
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 }, description: 'Search in eventName (case-insensitive)' },
+          ...eventFilterParams,
+          ...pageParams,
+        ],
         responses: {
           200: {
             description: 'My events, paginated',
@@ -1208,6 +1238,7 @@ export const openApiDocument = {
           401: R.unauthorized,
           403: R.forbidden,
           404: R.notFound,
+          409: conflict('The event is a Pending / Rejected request – approve or reject it first', 'A request must be approved or rejected before it can be edited'),
         },
       },
       delete: {
@@ -1237,6 +1268,9 @@ export const openApiDocument = {
       patch: {
         tags: ['Events'],
         summary: 'עדכון סטטוס ההכנות (Admin)',
+        description:
+          'מעבר חופשי בין הסטטוסים התפעוליים (New, Planning, Preparing, Ready, Completed) – לתיקון טעויות. ' +
+          'בקשה (Pending / Rejected) לא משתנה כאן: משתמשים ב-/approve או ב-/reject.',
         security: bearer,
         parameters: [idParam()],
         requestBody: { required: true, content: jsonContent(ref('StatusInput')) },
@@ -1246,6 +1280,91 @@ export const openApiDocument = {
           401: R.unauthorized,
           403: R.forbidden,
           404: R.notFound,
+          409: conflict('The event is a Pending / Rejected request', 'A request must be approved or rejected before its status can be managed'),
+        },
+      },
+    },
+    '/api/events/requests': {
+      post: {
+        tags: ['Event Requests'],
+        summary: 'שליחת בקשה לעיצוב אירוע (Client)',
+        description:
+          'הבקשה נוצרת בסטטוס **Pending** ומשויכת למשתמשת מה-Token. clientName ו-clientEmail נלקחים מהחשבון.\n\n' +
+          `**מגבלות:** עד ${MAX_PENDING_REQUESTS} בקשות ממתינות ללקוחה. בקשה כפולה – אותו שם אירוע (בלי הבדל אותיות) ` +
+          'ואותו תאריך, בבקשה ממתינה או באירוע שכבר אושר – נדחית ב-409. בקשה שנדחתה לא חוסמת שליחה מחדש. ' +
+          'הבדיקות מתבצעות בנעילה, כך שהן נכונות גם בבקשות מקבילות.\n\n' +
+          '**חבילה:** פעילה, ומסוג האירוע או כללית – אחרת 400 על packageId.',
+        security: bearer,
+        requestBody: { required: true, content: jsonContent(ref('EventRequestInput')) },
+        responses: {
+          201: { description: 'Request created (Pending)', content: jsonContent(ref('Event'), examplePendingRequest) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          409: conflict(
+            `Duplicate request, or ${MAX_PENDING_REQUESTS} pending requests already (details: { limit, current })`,
+            'You already have a request or an event with this name on this date',
+          ),
+        },
+      },
+    },
+    '/api/events/{id}/request': {
+      patch: {
+        tags: ['Event Requests'],
+        summary: 'עריכת בקשה ממתינה (בעלת הבקשה בלבד)',
+        description:
+          'רק שדות ה-Allowlist (EventRequestUpdate). רק בסטטוס **Pending**: השורה ננעלת לפני הבדיקה, ולכן עריכה במקביל לאישור ' +
+          'או לדחייה לא יכולה לעקוף אותם – היא מסתיימת לפני ההחלטה, או נדחית ב-409.',
+        security: bearer,
+        parameters: [idParam('id', 'Request (event) id')],
+        requestBody: { required: true, content: jsonContent(ref('EventRequestUpdate')) },
+        responses: {
+          200: { description: 'Updated request', content: jsonContent(ref('Event'), { ...examplePendingRequest, guestCount: 140 }) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.eventForbidden,
+          404: R.notFound,
+          409: conflict('The request is no longer Pending (approved / rejected), or the change makes it a duplicate', 'Only a pending request can be edited'),
+        },
+      },
+    },
+    '/api/events/{id}/approve': {
+      post: {
+        tags: ['Event Requests'],
+        summary: 'אישור בקשה (Admin): Pending → New',
+        description:
+          'עדכון אטומי בתנאי status = Pending. אותה רשומה הופכת לאירוע – לא נוצרת רשומה חדשה. ' +
+          'אישור כפול, או אישור ודחייה במקביל: הראשון מצליח, השני מקבל 409.',
+        security: bearer,
+        parameters: [idParam('id', 'Request (event) id')],
+        responses: {
+          200: { description: 'Approved – now an event in status New', content: jsonContent(ref('Event'), { ...examplePendingRequest, status: 'New', reviewedAt: '2026-10-28T10:00:00.000Z', reviewedById: 1 }) },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          404: R.notFound,
+          409: conflict('The request was already approved or rejected', 'This request was already reviewed'),
+        },
+      },
+    },
+    '/api/events/{id}/reject': {
+      post: {
+        tags: ['Event Requests'],
+        summary: 'דחיית בקשה (Admin): Pending → Rejected',
+        description: 'הבקשה נשמרת במסד (לא נמחקת) ונעולה לעריכה. reason – רשות, גלוי ללקוחה. אותה הגנה מפני החלטה כפולה כמו באישור.',
+        security: bearer,
+        parameters: [idParam('id', 'Request (event) id')],
+        requestBody: { required: false, content: jsonContent(ref('RejectInput')) },
+        responses: {
+          200: {
+            description: 'Rejected',
+            content: jsonContent(ref('Event'), { ...examplePendingRequest, status: 'Rejected', rejectionReason: 'התאריך כבר תפוס', reviewedAt: '2026-10-28T10:00:00.000Z', reviewedById: 1 }),
+          },
+          400: R.validation,
+          401: R.unauthorized,
+          403: R.forbidden,
+          404: R.notFound,
+          409: conflict('The request was already approved or rejected', 'This request was already reviewed'),
         },
       },
     },
