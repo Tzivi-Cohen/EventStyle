@@ -1,7 +1,8 @@
-# EventStyle – מדריך העלאה עתידית ל־Render
+# EventStyle – מדריך פריסה ל־Render
 
-המסמך מתאר, צעד אחר צעד, איך להעלות את EventStyle לענן Render **בעתיד**.
-שום פעולה כאן לא בוצעה עדיין: אין Repository ב־GitHub, אין שירות ב־Render ואין מסד בענן.
+המסמך מתאר, צעד אחר צעד, איך לפרוס את EventStyle לענן Render.
+
+**מצב נוכחי:** הקוד נמצא ב־GitHub, בשני מאגרים נפרדים (ראו סעיף 4). **הפריסה ל־Render עדיין לא בוצעה:** אין שירות ב־Render ואין מסד בענן.
 
 **הכלל החשוב:** מסד הנתונים המקומי `eventstyle` לא משתנה בשום שלב. כל הפעולות עליו הן קריאה וגיבוי בלבד.
 
@@ -12,11 +13,11 @@
 ```
 GitHub                         Render
 ───────────────────────        ─────────────────────────────────────────────
-eventstyle-backend   ───────►  eventstyle-api      (Web Service, Node)   ─┐
+EventStyle (שרת)     ───────►  eventstyle-api      (Web Service, Node)   ─┐
   render.yaml                    /api, /api-docs, /api/health             │ DATABASE_URL
                                                                            ▼
                                eventstyle-db       (PostgreSQL 17)
-eventstyle-client    ───────►  eventstyle-client   (Static Site, React)
+EventStyle-client    ───────►  eventstyle-client   (Static Site, React)
   render.yaml                    כל נתיב → index.html (React Router)
                                       │ VITE_API_URL
                                       └──────────► eventstyle-api
@@ -86,8 +87,6 @@ SELECT '_prisma_migrations', count(*) FROM "_prisma_migrations";
 
 ## 3. נתונים אמיתיים מול נתוני ניסיון
 
-מצב המסד המקומי (29.10.2026, קריאה בלבד): 8 משתמשים, 8 אירועים, 13 חבילות, 10 פריטי גלריה, 0 תמונות אירוע, 8/8 Migrations.
-
 | סוג | איך מזהים | המלצה לענן |
 |---|---|---|
 | נתוני הדגמה מה־Seed | כתובות `@example.com` / `@eventstyle.example`, סיסמאות פיתוח ידועות (`Admin12345`, סיסמת לקוחות ההדגמה) | **לא להעביר.** ב־Production ה־Seed לא יוצר אותם |
@@ -99,25 +98,30 @@ SELECT '_prisma_migrations', count(*) FROM "_prisma_migrations";
 
 ---
 
-## 4. GitHub (לא בוצע)
+## 4. GitHub
 
-שני Repositories **פרטיים**: `eventstyle-backend` ו־`eventstyle-client`. בכל תיקייה:
+הקוד נמצא בשני מאגרים נפרדים, בענף `main`:
+
+| צד | מאגר |
+|---|---|
+| שרת | <https://github.com/Tzivi-Cohen/EventStyle> |
+| לקוח | <https://github.com/Tzivi-Cohen/EventStyle-client> |
+
+Render מושך את הקוד מהמאגרים האלה. לפני כל עדכון של הקוד בענן, בכל תיקייה:
 ```bash
 git status                       # לבדוק שאין .env ברשימה
 git add .
-git commit -m "EventStyle – ready for submission"
-git branch -M main
-git remote add origin https://github.com/<USERNAME>/<REPO>.git
-git push -u origin main
+git commit -m "<תיאור השינוי>"
+git push
 ```
-אחרי ה־Push, בדקי באתר GitHub שקובצי `.env`, `dist`, `node_modules` וגיבויים (`*.dump`) **לא** הועלו.
+אחרי ה־Push, אפשר לבדוק באתר GitHub שקובצי `.env`, `dist`, `node_modules` וגיבויים (`*.dump`) **לא** הועלו. בגלל `autoDeploy: false`, ה־Push לא מעדכן את Render – צריך **Manual Deploy**.
 
 ---
 
 ## 5. השרת והמסד ב־Render
 
 1. התחברי ל־<https://render.com> עם GitHub.
-2. **New → Blueprint** ← בחרי את `eventstyle-backend`. Render יקרא את `render.yaml` ויציג שני משאבים: `eventstyle-api` ו־`eventstyle-db`.
+2. **New → Blueprint** ← בחרי את המאגר `EventStyle` (השרת). Render יקרא את `render.yaml` ויציג שני משאבים: `eventstyle-api` ו־`eventstyle-db`.
 3. מלאי את המשתנים שמסומנים `sync: false`:
 
 | משתנה | ערך | הערה |
@@ -145,7 +149,7 @@ git push -u origin main
 
 ## 6. אתר ה־React ב־Render
 
-1. **New → Blueprint** ← `eventstyle-client`. Render יקרא את `render.yaml` (Static Site).
+1. **New → Blueprint** ← המאגר `EventStyle-client`. Render יקרא את `render.yaml` (Static Site).
 2. משתנים:
 
 | משתנה | ערך |

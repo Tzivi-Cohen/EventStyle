@@ -18,7 +18,6 @@ const envSchema = z
       .regex(/^\d+[smhd]$/, 'JWT_EXPIRES_IN must look like 15m, 2h or 1d')
       .default('2h'),
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
-    // אין אימות אימייל בקוד ואין שליחת מיילים. EMAIL_PROVIDER ישן בקובץ ההגדרות פשוט מתעלמים ממנו
 
     CLOUDINARY_CLOUD_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
     CLOUDINARY_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
